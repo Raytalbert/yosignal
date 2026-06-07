@@ -4,6 +4,8 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
 /*
  * Design system definition.
  *
@@ -59,34 +61,44 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-ink: var(--ink);
+  --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
+  --radius: 0.5rem;
+  /* Editorial dark theme — warm ink on deep navy, amber signal */
+  --background: oklch(0.16 0.018 250);
+  --foreground: oklch(0.94 0.012 80);
+  --ink: oklch(0.88 0.02 75);
+  --card: oklch(0.20 0.02 250);
+  --card-foreground: oklch(0.94 0.012 80);
+  --popover: oklch(0.20 0.02 250);
+  --popover-foreground: oklch(0.94 0.012 80);
+  --primary: oklch(0.82 0.14 75);
+  --primary-foreground: oklch(0.18 0.02 250);
+  --secondary: oklch(0.24 0.02 250);
+  --secondary-foreground: oklch(0.94 0.012 80);
+  --muted: oklch(0.22 0.018 250);
+  --muted-foreground: oklch(0.65 0.02 80);
+  --accent: oklch(0.78 0.16 55);
+  --accent-foreground: oklch(0.16 0.02 250);
+  --signal: oklch(0.78 0.16 55);
+  --signal-foreground: oklch(0.16 0.02 250);
+  --destructive: oklch(0.62 0.22 25);
   --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+  --border: oklch(0.28 0.02 250);
+  --input: oklch(0.24 0.02 250);
+  --ring: oklch(0.78 0.16 55);
+  --chart-1: oklch(0.78 0.16 55);
+  --chart-2: oklch(0.7 0.12 200);
+  --chart-3: oklch(0.65 0.14 320);
+  --chart-4: oklch(0.82 0.14 75);
+  --chart-5: oklch(0.6 0.1 150);
   --sidebar: oklch(0.984 0.003 247.858);
   --sidebar-foreground: oklch(0.129 0.042 264.695);
   --sidebar-primary: oklch(0.208 0.042 265.755);
@@ -140,5 +152,30 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.78 0.16 55 / 0.08), transparent 70%),
+      radial-gradient(ellipse 60% 40% at 100% 100%, oklch(0.6 0.18 280 / 0.06), transparent 70%);
+    background-attachment: fixed;
+  }
+
+  .font-serif { font-family: var(--font-serif); font-feature-settings: "liga", "dlig"; }
+  .font-mono { font-family: var(--font-mono); }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .grain {
+    position: relative;
+  }
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.5 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.35'/></svg>");
+    opacity: 0.04;
+    mix-blend-mode: overlay;
   }
 }
