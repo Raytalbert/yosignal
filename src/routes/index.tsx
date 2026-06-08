@@ -3,21 +3,21 @@ import { useEffect, useState } from "react";
 import { Onboarding, type StartupContext } from "@/components/Onboarding";
 import { BriefingChat } from "@/components/BriefingChat";
 
-const STORAGE_KEY = "cos.startup";
+const STORAGE_KEY = "yosignal.startup.v2";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Chief of Staff — your morning intelligence briefing" },
+      { title: "Yo, Signal — your morning intelligence briefing" },
       {
         name: "description",
         content:
-          "An AI Chief of Staff for startup founders. Wake up to a personal briefing on what changed in your world overnight — and what to do about it today.",
+          "Yo, Signal is an AI Chief of Staff for startup founders. Wake up to a personal briefing on what changed in your world overnight — and what to do about it today.",
       },
-      { property: "og:title", content: "Chief of Staff" },
+      { property: "og:title", content: "Yo, Signal" },
       {
         property: "og:description",
-        content: "An AI Chief of Staff for startup founders. Information into decisions, before coffee.",
+        content: "Information into decisions, before coffee. An AI Chief of Staff for founders.",
       },
     ],
   }),

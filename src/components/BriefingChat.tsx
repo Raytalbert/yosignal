@@ -74,7 +74,7 @@ export function BriefingChat({
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-baseline gap-3">
             <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-signal">
-              Chief of Staff
+              Yo, Signal
             </span>
             <span className="text-muted-foreground/60">·</span>
             <span className="font-serif text-xl italic">{startup.name}</span>
