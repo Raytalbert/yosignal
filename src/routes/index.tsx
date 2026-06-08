@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Onboarding, type StartupContext } from "@/components/Onboarding";
 import { BriefingChat } from "@/components/BriefingChat";
 
-const STORAGE_KEY = "cos.startup";
+const STORAGE_KEY = "yosignal.startup.v2";
 
 export const Route = createFileRoute("/")({
   head: () => ({
