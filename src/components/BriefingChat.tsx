@@ -27,9 +27,11 @@ function formatDate() {
 export function BriefingChat({
   startup,
   onReset,
+  onSignOut,
 }: {
   startup: StartupContext;
   onReset: () => void;
+  onSignOut?: () => void;
 }) {
   const send = useServerFn(sendBriefingMessage);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -51,7 +53,8 @@ export function BriefingChat({
     setLoading(true);
     try {
       const res = await send({ data: { startup, messages: next } });
-      setMessages([...next, { role: "assistant", content: res.content || "(no response)" }]);
+      const reply = res?.content || "(no response)";
+      setMessages([...next, { role: "assistant", content: reply }]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setMessages(next);
@@ -77,7 +80,7 @@ export function BriefingChat({
               Yo, Signal
             </span>
             <span className="text-muted-foreground/60">·</span>
-            <span className="font-serif text-xl italic">{startup.name}</span>
+            <span className="font-serif text-xl italic truncate max-w-[40vw]">{startup.name}</span>
           </div>
           <div className="flex items-center gap-4">
             <span className="font-mono text-[10px] tracking-wider uppercase text-muted-foreground hidden sm:inline">
@@ -89,6 +92,14 @@ export function BriefingChat({
             >
               Switch
             </button>
+            {onSignOut && (
+              <button
+                onClick={onSignOut}
+                className="font-mono text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-signal transition"
+              >
+                Sign out
+              </button>
+            )}
           </div>
         </div>
       </header>
