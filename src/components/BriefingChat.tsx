@@ -27,9 +27,11 @@ function formatDate() {
 export function BriefingChat({
   startup,
   onReset,
+  onSignOut,
 }: {
   startup: StartupContext;
   onReset: () => void;
+  onSignOut?: () => void;
 }) {
   const send = useServerFn(sendBriefingMessage);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -90,6 +92,14 @@ export function BriefingChat({
             >
               Switch
             </button>
+            {onSignOut && (
+              <button
+                onClick={onSignOut}
+                className="font-mono text-[10px] tracking-[0.18em] uppercase text-muted-foreground hover:text-signal transition"
+              >
+                Sign out
+              </button>
+            )}
           </div>
         </div>
       </header>
