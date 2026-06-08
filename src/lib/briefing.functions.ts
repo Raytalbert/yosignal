@@ -76,7 +76,7 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           contextMsg,
@@ -96,6 +96,9 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
       choices?: { message?: { content?: string } }[];
     };
     const content = payload.choices?.[0]?.message?.content ?? "";
+    if (!content) {
+      throw new Error("The model returned an empty response. Try again.");
+    }
     return { content };
   });
 
