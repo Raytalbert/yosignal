@@ -2,7 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Onboarding, type StartupContext } from "@/components/Onboarding";
-import { BriefingChat } from "@/components/BriefingChat";
+import { SignalFeed } from "@/components/SignalFeed";
 
 const STORAGE_KEY = "yosignal.startup.v2";
 
@@ -62,7 +62,7 @@ function AppPage() {
   if (!ready) return <div className="min-h-screen bg-background" />;
 
   return startup ? (
-    <BriefingChat startup={startup} onReset={handleReset} onSignOut={handleSignOut} />
+    <SignalFeed startup={startup} onReset={handleReset} onSignOut={handleSignOut} />
   ) : (
     <Onboarding onSubmit={handleSubmit} />
   );
