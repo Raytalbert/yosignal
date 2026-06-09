@@ -11,13 +11,15 @@ const StartupSchema = z.object({
   delivery: z.string().optional().default("in-app"),
 });
 
-const FEEDS = [
-  { url: "https://hnrss.org/frontpage?points=100", source: "Hacker News" },
-  { url: "https://techcrunch.com/feed/", source: "TechCrunch" },
-  { url: "https://venturebeat.com/category/ai/feed/", source: "VentureBeat AI" },
-  { url: "https://www.theverge.com/rss/index.xml", source: "The Verge" },
-  { url: "https://news.ycombinator.com/rss", source: "Hacker News" },
-];
+type FeedSource = { url: string; source: string };
+
+function googleNewsFeed(query: string): FeedSource {
+  const q = encodeURIComponent(query);
+  return {
+    url: `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`,
+    source: `News · ${query}`,
+  };
+}
 
 function clean(s: string) {
   return s
@@ -58,9 +60,9 @@ function parseFeed(xml: string, source: string) {
   return items;
 }
 
-async function fetchAllFeeds() {
+async function fetchAllFeeds(feeds: FeedSource[]) {
   const results = await Promise.allSettled(
-    FEEDS.map(async (f) => {
+    feeds.map(async (f) => {
       const r = await fetch(f.url, {
         headers: { "User-Agent": "YoSignal/1.0 (+https://yosignal.app)" },
       });
@@ -78,7 +80,52 @@ async function fetchAllFeeds() {
       seen.add(x.link);
       return true;
     });
-  return all.slice(0, 60);
+  return all.slice(0, 80);
+}
+
+async function generateQueries(
+  apiKey: string,
+  startup: z.infer<typeof StartupSchema>,
+): Promise<string[]> {
+  const prompt = `You are building a personalized news feed for a startup. Generate 6-8 Google News search queries that will surface the most relevant, recent stories for THIS company. Think broadly across: the problem space, target users/customers, adjacent industries, regulatory/policy moves, mission-aligned movements, and named competitors.
+
+Startup: ${startup.name}
+Description: ${startup.description || "—"}
+Industry: ${startup.industry || "—"}
+Competitors: ${startup.competitors.join(", ") || "—"}
+Watch categories: ${startup.categories.join(", ") || "—"}
+
+Rules:
+- Each query is 2-6 words. Specific enough to surface relevant stories, broad enough to return results.
+- Mix domain queries (e.g. "workplace discrimination lawsuit", "EEOC ruling"), competitor names, and category queries.
+- Do NOT default to generic tech terms ("AI startup", "venture capital") unless that's actually this company's space.
+- Avoid duplicates.
+
+Return ONLY compact JSON: {"queries":["...","..."]}`;
+
+  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "google/gemini-2.5-flash",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+    }),
+  });
+  if (!res.ok) return [];
+  const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  try {
+    const parsed = JSON.parse(payload.choices?.[0]?.message?.content ?? "{}") as {
+      queries?: string[];
+    };
+    return (parsed.queries ?? [])
+      .filter((q): q is string => typeof q === "string")
+      .map((q) => q.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+  } catch {
+    return [];
+  }
 }
 
 export const generateFeed = createServerFn({ method: "POST" })
@@ -87,12 +134,25 @@ export const generateFeed = createServerFn({ method: "POST" })
     const apiKey = process.env.LOVABLE_API_KEY;
     if (!apiKey) throw new Error("AI gateway not configured.");
 
-    const raw = await fetchAllFeeds();
+    // 1) Ask the model for tailored search queries based on the startup profile.
+    const queries = await generateQueries(apiKey, data.startup);
+
+    // 2) Always include competitor name queries as a baseline.
+    const competitorQueries = data.startup.competitors.slice(0, 5);
+    const allQueries = Array.from(new Set([...queries, ...competitorQueries])).slice(0, 10);
+
+    const feeds: FeedSource[] = allQueries.length
+      ? allQueries.map(googleNewsFeed)
+      : [googleNewsFeed(data.startup.industry || data.startup.name)];
+
+    const raw = await fetchAllFeeds(feeds);
     if (raw.length === 0) {
       return { signals: [], generatedAt: new Date().toISOString(), note: "feeds-empty" };
     }
 
-    const prompt = `You curate a personalized "signal feed" for a startup founder — like a feed of tweets, but every item is sharp, relevant, and opinionated. Below are raw items from RSS feeds. Pick the 10–14 that most matter to THIS specific startup, and rewrite each as a tweet-sized card.
+    const prompt = `You curate a personalized "signal feed" for a startup founder — like a feed of tweets, but every item is sharp, relevant, and opinionated. Below are raw news items pulled from queries tailored to this company. Pick the 10–14 that most matter to THIS specific startup, and rewrite each as a tweet-sized card.
+
+CRITICAL: Be ruthless about relevance. If an item is generic tech news, off-topic, or only tangentially related to this company's actual mission, DROP IT. Better to return 6 sharp items than 14 mediocre ones. The founder of a workplace-justice platform should NOT see "Apple announces new framework" — they should see EEOC rulings, discrimination lawsuits, labor policy, HR-tech moves, etc.
 
 Startup: ${data.startup.name}
 Description: ${data.startup.description || "—"}
@@ -104,7 +164,7 @@ Raw items (JSON):
 ${JSON.stringify(raw.map((x) => ({ source: x.source, title: x.title, summary: x.summary, url: x.link, date: x.pubDate })))}
 
 Filter aggressively. Drop anything generic or off-topic. For each kept item, output:
-- source: the feed source
+- source: a short publication name (extract from the title if present, e.g. "Reuters", "NYT"; otherwise use the feed source)
 - title: keep close to original (≤ 120 chars)
 - summary: 1–2 punchy sentences in your own words (≤ 280 chars)
 - why: ONE opinionated sentence on why this matters to ${data.startup.name} specifically
