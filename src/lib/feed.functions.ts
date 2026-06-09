@@ -11,6 +11,13 @@ const StartupSchema = z.object({
   delivery: z.string().optional().default("in-app"),
 });
 
+const PrefsSchema = z.object({
+  focusAreas: z.array(z.string().max(60)).max(20).optional().default([]),
+  extraKeywords: z.array(z.string().max(60)).max(30).optional().default([]),
+  mutedTitles: z.array(z.string().max(300)).max(200).optional().default([]),
+  mutedSources: z.array(z.string().max(120)).max(80).optional().default([]),
+});
+
 type FeedSource = { url: string; source: string };
 
 function googleNewsFeed(query: string): FeedSource {
@@ -86,6 +93,7 @@ async function fetchAllFeeds(feeds: FeedSource[]) {
 async function generateQueries(
   apiKey: string,
   startup: z.infer<typeof StartupSchema>,
+  prefs: z.infer<typeof PrefsSchema>,
 ): Promise<string[]> {
   const prompt = `You are building a personalized news feed for a startup. Generate 6-8 Google News search queries that will surface the most relevant, recent stories for THIS company. Think broadly across: the problem space, target users/customers, adjacent industries, regulatory/policy moves, mission-aligned movements, and named competitors.
 
@@ -94,10 +102,14 @@ Description: ${startup.description || "—"}
 Industry: ${startup.industry || "—"}
 Competitors: ${startup.competitors.join(", ") || "—"}
 Watch categories: ${startup.categories.join(", ") || "—"}
+Focus areas (weight heavily): ${prefs.focusAreas.join(", ") || "—"}
+Extra keywords from founder: ${prefs.extraKeywords.join(", ") || "—"}
+AVOID topics the founder marked irrelevant (do NOT generate queries matching these themes): ${prefs.mutedTitles.slice(0, 20).join(" | ") || "—"}
 
 Rules:
 - Each query is 2-6 words. Specific enough to surface relevant stories, broad enough to return results.
-- Mix domain queries (e.g. "workplace discrimination lawsuit", "EEOC ruling"), competitor names, and category queries.
+- Mix domain queries (e.g. "workplace discrimination lawsuit", "EEOC ruling"), competitor names, and focus-area queries.
+- If focus areas or extra keywords are present, AT LEAST half of queries should reflect them.
 - Do NOT default to generic tech terms ("AI startup", "venture capital") unless that's actually this company's space.
 - Avoid duplicates.
 
@@ -129,23 +141,45 @@ Return ONLY compact JSON: {"queries":["...","..."]}`;
 }
 
 export const generateFeed = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => z.object({ startup: StartupSchema }).parse(d))
+  .inputValidator((d: unknown) =>
+    z.object({ startup: StartupSchema, prefs: PrefsSchema.optional() }).parse(d),
+  )
   .handler(async ({ data }) => {
     const apiKey = process.env.LOVABLE_API_KEY;
     if (!apiKey) throw new Error("AI gateway not configured.");
 
-    // 1) Ask the model for tailored search queries based on the startup profile.
-    const queries = await generateQueries(apiKey, data.startup);
+    const prefs: z.infer<typeof PrefsSchema> = data.prefs ?? {
+      focusAreas: [],
+      extraKeywords: [],
+      mutedTitles: [],
+      mutedSources: [],
+    };
 
-    // 2) Always include competitor name queries as a baseline.
+    // 1) Ask the model for tailored search queries based on the startup profile.
+    const queries = await generateQueries(apiKey, data.startup, prefs);
+
+    // 2) Always include competitor names + founder's extra keywords as a baseline.
     const competitorQueries = data.startup.competitors.slice(0, 5);
-    const allQueries = Array.from(new Set([...queries, ...competitorQueries])).slice(0, 10);
+    const allQueries = Array.from(
+      new Set([...prefs.extraKeywords, ...queries, ...competitorQueries]),
+    ).slice(0, 12);
 
     const feeds: FeedSource[] = allQueries.length
       ? allQueries.map(googleNewsFeed)
       : [googleNewsFeed(data.startup.industry || data.startup.name)];
 
-    const raw = await fetchAllFeeds(feeds);
+    let raw = await fetchAllFeeds(feeds);
+    // hard-filter muted titles / sources before sending to the model
+    if (prefs.mutedTitles.length || prefs.mutedSources.length) {
+      const muted = prefs.mutedTitles.map((t) => t.toLowerCase().slice(0, 80));
+      const mutedSources = prefs.mutedSources.map((s) => s.toLowerCase());
+      raw = raw.filter((x) => {
+        const t = x.title.toLowerCase();
+        if (mutedSources.some((s) => x.source.toLowerCase().includes(s))) return false;
+        if (muted.some((m) => m && t.includes(m))) return false;
+        return true;
+      });
+    }
     if (raw.length === 0) {
       return { signals: [], generatedAt: new Date().toISOString(), note: "feeds-empty" };
     }
@@ -159,6 +193,9 @@ Description: ${data.startup.description || "—"}
 Industry: ${data.startup.industry || "—"}
 Competitors tracked: ${data.startup.competitors.join(", ") || "—"}
 Watch categories: ${data.startup.categories.join(", ") || "—"}
+Founder focus areas (weight heavily): ${prefs.focusAreas.join(", ") || "—"}
+Founder extra keywords: ${prefs.extraKeywords.join(", ") || "—"}
+Topics founder has marked NOT RELEVANT (avoid these themes — do not surface similar items): ${prefs.mutedTitles.slice(0, 30).join(" | ") || "—"}
 
 Raw items (JSON):
 ${JSON.stringify(raw.map((x) => ({ source: x.source, title: x.title, summary: x.summary, url: x.link, date: x.pubDate })))}
@@ -169,11 +206,14 @@ Filter aggressively. Drop anything generic or off-topic. For each kept item, out
 - summary: 1–2 punchy sentences in your own words (≤ 280 chars)
 - why: ONE opinionated sentence on why this matters to ${data.startup.name} specifically
 - tag: one of [AI, Competitor, Funding, Product, Regulatory, Industry, Talent]
+- relevance: integer 0-100, how relevant THIS item is to THIS startup right now (be honest; reserve >85 for genuinely urgent/on-mission items)
+- urgency: one of [Breaking, Today, This week, Background] based on timing AND impact
+- matches: 1-3 short tags (≤ 22 chars each) describing WHY it matched — e.g. "focus: legal/regulatory", "matches: discrimination", "competitor: Lattice"
 - url: original link
 - date: original date if present
 
 Return ONLY compact JSON exactly like:
-{"signals":[{"source":"...","title":"...","summary":"...","why":"...","tag":"...","url":"...","date":"..."}]}`;
+{"signals":[{"source":"...","title":"...","summary":"...","why":"...","tag":"...","relevance":0,"urgency":"...","matches":["..."],"url":"...","date":"..."}]}`;
 
     const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
