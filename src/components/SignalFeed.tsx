@@ -14,7 +14,36 @@ interface Signal {
   tag: string;
   url: string;
   date?: string;
+  relevance?: number;
+  urgency?: string;
+  matches?: string[];
 }
+
+export interface FeedPrefs {
+  focusAreas: string[];
+  extraKeywords: string[];
+  mutedTitles: string[];
+  mutedSources: string[];
+}
+
+export const DEFAULT_PREFS: FeedPrefs = {
+  focusAreas: [],
+  extraKeywords: [],
+  mutedTitles: [],
+  mutedSources: [],
+};
+
+const FOCUS_AREA_OPTIONS = [
+  "Legal & Regulatory",
+  "Product & Launches",
+  "AI for Good",
+  "Funding & Deals",
+  "Competitor Moves",
+  "Policy & Politics",
+  "Talent & Hiring",
+  "Customer Stories",
+  "Industry Trends",
+];
 
 const TAG_COLORS: Record<string, string> = {
   AI: "text-violet-300 border-violet-400/40 bg-violet-400/10",
@@ -28,10 +57,14 @@ const TAG_COLORS: Record<string, string> = {
 
 export function SignalFeed({
   startup,
+  prefs,
+  onPrefsChange,
   onReset,
   onSignOut,
 }: {
   startup: StartupContext;
+  prefs: FeedPrefs;
+  onPrefsChange: (p: FeedPrefs) => void;
   onReset: () => void;
   onSignOut?: () => void;
 }) {
@@ -41,12 +74,13 @@ export function SignalFeed({
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<Signal | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
-  async function load() {
+  async function load(withPrefs: FeedPrefs = prefs) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchFeed({ data: { startup } });
+      const res = await fetchFeed({ data: { startup, prefs: withPrefs } });
       setSignals((res.signals as Signal[]) ?? []);
       setUpdatedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
     } catch (e) {
@@ -60,6 +94,35 @@ export function SignalFeed({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function muteSignal(s: Signal) {
+    const next: FeedPrefs = {
+      ...prefs,
+      mutedTitles: Array.from(new Set([...prefs.mutedTitles, s.title])).slice(-200),
+    };
+    onPrefsChange(next);
+    setSignals((cur) => cur.filter((x) => x.url !== s.url));
+  }
+
+  function applyPrefs(next: FeedPrefs) {
+    onPrefsChange(next);
+    setSettingsOpen(false);
+    void load(next);
+  }
+
+  // partition by freshness: < 48h "recent", everything else "older"
+  const RECENT_MS = 48 * 60 * 60 * 1000;
+  const now = Date.now();
+  const withTs = signals.map((s) => {
+    const t = s.date ? new Date(s.date).getTime() : NaN;
+    return { s, ts: Number.isFinite(t) ? t : 0 };
+  });
+  const recent = withTs
+    .filter((x) => x.ts && now - x.ts <= RECENT_MS)
+    .sort((a, b) => b.ts - a.ts);
+  const older = withTs
+    .filter((x) => !x.ts || now - x.ts > RECENT_MS)
+    .sort((a, b) => b.ts - a.ts);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -77,6 +140,12 @@ export function SignalFeed({
               className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground hover:text-signal disabled:opacity-40"
             >
               {loading ? "Scanning…" : "Refresh"}
+            </button>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground hover:text-signal"
+            >
+              Tune
             </button>
             <button
               onClick={onReset}
@@ -97,6 +166,8 @@ export function SignalFeed({
         <div className="max-w-2xl mx-auto px-5 pb-3">
           <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-muted-foreground">
             Your feed{updatedAt ? ` · updated ${updatedAt}` : ""}
+            {prefs.focusAreas.length > 0 && ` · focus: ${prefs.focusAreas.length}`}
+            {prefs.mutedTitles.length > 0 && ` · muted: ${prefs.mutedTitles.length}`}
           </p>
         </div>
       </header>
@@ -114,13 +185,41 @@ export function SignalFeed({
               No signals matched your watchlist yet. Try refresh in a bit.
             </div>
           )}
-          <ul className="divide-y divide-border/60">
-            {signals.map((s, i) => (
-              <li key={`${s.url}-${i}`}>
-                <SignalCard signal={s} onOpen={() => setActive(s)} />
-              </li>
-            ))}
-          </ul>
+          {recent.length > 0 && (
+            <ul className="divide-y divide-border/60">
+              {recent.map(({ s }, i) => (
+                <li key={`r-${s.url}-${i}`}>
+                  <SignalCard
+                    signal={s}
+                    onOpen={() => setActive(s)}
+                    onMute={() => muteSignal(s)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+          {older.length > 0 && (
+            <>
+              <div className="px-5 pt-8 pb-3 flex items-center gap-3">
+                <div className="h-px flex-1 bg-border/60" />
+                <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                  Older — still relevant
+                </span>
+                <div className="h-px flex-1 bg-border/60" />
+              </div>
+              <ul className="divide-y divide-border/60 opacity-80">
+                {older.map(({ s }, i) => (
+                  <li key={`o-${s.url}-${i}`}>
+                    <SignalCard
+                      signal={s}
+                      onOpen={() => setActive(s)}
+                      onMute={() => muteSignal(s)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       </main>
 
@@ -129,12 +228,40 @@ export function SignalFeed({
           {active && <SignalThread startup={startup} signal={active} />}
         </SheetContent>
       </Sheet>
+
+      <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-md p-6 overflow-y-auto">
+          <SettingsPanel
+            initial={prefs}
+            onCancel={() => setSettingsOpen(false)}
+            onSave={applyPrefs}
+          />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
-function SignalCard({ signal, onOpen }: { signal: Signal; onOpen: () => void }) {
+function SignalCard({
+  signal,
+  onOpen,
+  onMute,
+}: {
+  signal: Signal;
+  onOpen: () => void;
+  onMute: () => void;
+}) {
   const tagClass = TAG_COLORS[signal.tag] ?? "text-muted-foreground border-border bg-card/60";
+  const relevance = typeof signal.relevance === "number" ? Math.max(0, Math.min(100, signal.relevance)) : null;
+  const urgency = signal.urgency ?? "";
+  const urgencyClass =
+    urgency === "Breaking"
+      ? "text-rose-300 border-rose-400/40 bg-rose-400/10"
+      : urgency === "Today"
+        ? "text-emerald-300 border-emerald-400/40 bg-emerald-400/10"
+        : urgency === "This week"
+          ? "text-sky-300 border-sky-400/40 bg-sky-400/10"
+          : "text-muted-foreground border-border bg-card/60";
   return (
     <article
       className="px-5 py-5 hover:bg-card/40 transition cursor-pointer"
@@ -150,18 +277,57 @@ function SignalCard({ signal, onOpen }: { signal: Signal; onOpen: () => void }) 
             {signal.date ? formatDate(signal.date) : "today"}
           </span>
         </div>
-        <span
-          className={`ml-auto font-mono text-[9px] uppercase tracking-[0.18em] px-2 py-0.5 rounded-full border ${tagClass}`}
-        >
-          {signal.tag}
-        </span>
+        <div className="ml-auto flex items-center gap-1.5 shrink-0">
+          {urgency && urgency !== "Background" && (
+            <span className={`font-mono text-[9px] uppercase tracking-[0.18em] px-2 py-0.5 rounded-full border ${urgencyClass}`}>
+              {urgency}
+            </span>
+          )}
+          <span
+            className={`font-mono text-[9px] uppercase tracking-[0.18em] px-2 py-0.5 rounded-full border ${tagClass}`}
+          >
+            {signal.tag}
+          </span>
+        </div>
       </div>
       <h3 className="font-serif text-lg leading-snug mb-2 text-balance">{signal.title}</h3>
       <p className="text-sm text-foreground/80 mb-3 leading-relaxed">{signal.summary}</p>
       <p className="text-sm italic text-signal/90 border-l-2 border-signal/60 pl-3">
         {signal.why}
       </p>
-      <div className="mt-3 flex items-center gap-5 text-muted-foreground">
+
+      {(relevance !== null || (signal.matches && signal.matches.length > 0)) && (
+        <div className="mt-3 space-y-1.5">
+          {relevance !== null && (
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground w-16 shrink-0">
+                Relevance
+              </span>
+              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-signal transition-all"
+                  style={{ width: `${relevance}%` }}
+                />
+              </div>
+              <span className="font-mono text-[10px] text-signal w-8 text-right">{relevance}</span>
+            </div>
+          )}
+          {signal.matches && signal.matches.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pl-[4.25rem]">
+              {signal.matches.slice(0, 4).map((m, i) => (
+                <span
+                  key={`${m}-${i}`}
+                  className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground border border-border/70 rounded-sm px-1.5 py-0.5"
+                >
+                  {m}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 flex items-center gap-5 text-muted-foreground">
         <button
           className="font-mono text-[10px] uppercase tracking-wider hover:text-signal"
           onClick={(e) => {
@@ -182,6 +348,16 @@ function SignalCard({ signal, onOpen }: { signal: Signal; onOpen: () => void }) 
             Source ↗
           </a>
         )}
+        <button
+          className="ml-auto font-mono text-[10px] uppercase tracking-wider hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            onMute();
+          }}
+          title="Mark not relevant — Signal will show fewer like this"
+        >
+          Not relevant ✕
+        </button>
       </div>
     </article>
   );
@@ -193,7 +369,143 @@ function formatDate(d: string) {
   const diffH = (Date.now() - parsed.getTime()) / 36e5;
   if (diffH < 1) return `${Math.max(1, Math.round(diffH * 60))}m ago`;
   if (diffH < 24) return `${Math.round(diffH)}h ago`;
+  const diffD = diffH / 24;
+  if (diffD < 7) return `${Math.round(diffD)}d ago`;
   return parsed.toLocaleDateString();
+}
+
+function SettingsPanel({
+  initial,
+  onSave,
+  onCancel,
+}: {
+  initial: FeedPrefs;
+  onSave: (p: FeedPrefs) => void;
+  onCancel: () => void;
+}) {
+  const [focusAreas, setFocusAreas] = useState<string[]>(initial.focusAreas);
+  const [keywordsText, setKeywordsText] = useState<string>(initial.extraKeywords.join(", "));
+  const [mutedTitles, setMutedTitles] = useState<string[]>(initial.mutedTitles);
+
+  function toggleFocus(a: string) {
+    setFocusAreas((cur) => (cur.includes(a) ? cur.filter((x) => x !== a) : [...cur, a]));
+  }
+
+  function save() {
+    const extraKeywords = keywordsText
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 30);
+    onSave({ ...initial, focusAreas, extraKeywords, mutedTitles });
+  }
+
+  return (
+    <div className="space-y-6">
+      <SheetHeader className="text-left p-0">
+        <SheetTitle className="font-serif text-xl">Tune your feed</SheetTitle>
+        <p className="text-sm text-muted-foreground">
+          Shape what Signal pulls and how it ranks relevance.
+        </p>
+      </SheetHeader>
+
+      <section>
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mb-3">
+          Focus areas
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {FOCUS_AREA_OPTIONS.map((a) => {
+            const on = focusAreas.includes(a);
+            return (
+              <button
+                key={a}
+                type="button"
+                onClick={() => toggleFocus(a)}
+                className={`text-xs px-3 py-1.5 rounded-full border transition ${
+                  on
+                    ? "bg-signal text-signal-foreground border-signal"
+                    : "border-border text-foreground/80 hover:border-signal/60"
+                }`}
+              >
+                {a}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section>
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mb-2">
+          Extra keywords
+        </p>
+        <textarea
+          value={keywordsText}
+          onChange={(e) => setKeywordsText(e.target.value)}
+          rows={3}
+          placeholder="e.g. EEOC, retaliation lawsuit, pay transparency, workplace harassment"
+          className="w-full bg-input border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-signal resize-none"
+        />
+        <p className="text-[11px] text-muted-foreground mt-1">
+          Comma-separated. These get turned into news queries directly.
+        </p>
+      </section>
+
+      <section>
+        <div className="flex items-center justify-between mb-2">
+          <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            Muted ({mutedTitles.length})
+          </p>
+          {mutedTitles.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setMutedTitles([])}
+              className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground hover:text-destructive"
+            >
+              Clear all
+            </button>
+          )}
+        </div>
+        {mutedTitles.length === 0 ? (
+          <p className="text-xs text-muted-foreground italic">
+            Tap "Not relevant" on any card to teach Signal what to skip.
+          </p>
+        ) : (
+          <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+            {mutedTitles.slice(-20).reverse().map((t, i) => (
+              <li key={`${t}-${i}`} className="flex items-start gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setMutedTitles((cur) => cur.filter((x) => x !== t))}
+                  className="text-muted-foreground hover:text-foreground mt-0.5"
+                  title="Unmute"
+                >
+                  ✕
+                </button>
+                <span className="flex-1 text-foreground/70 line-clamp-2">{t}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <div className="flex gap-2 pt-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="flex-1 border border-border rounded-md px-4 py-2 text-sm hover:border-signal/60"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={save}
+          className="flex-1 bg-signal text-signal-foreground rounded-md px-4 py-2 text-sm font-medium"
+        >
+          Save & regenerate
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function FeedSkeleton() {
