@@ -538,19 +538,20 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
     setMessages(next);
     setInput("");
     setLoading(true);
-    const seed = `The founder is asking about this specific signal from their personalized feed:
-
-Source: ${signal.source}
-Headline: ${signal.title}
-Summary: ${signal.summary}
-Your prior take: ${signal.why}
-URL: ${signal.url}
-
-Their question: ${q}
-
-Answer conversationally, sharp and opinionated, grounded in their startup context. Drop the briefing structure; treat this like a follow-up DM with their chief of staff.`;
+    // Pre-seed the thread with system context about this signal so subsequent
+    // turns stay grounded — and send the user's actual question as a user turn.
+    const signalContext = {
+      role: "system" as const,
+      content: `The founder just tapped this signal from their feed. Ground the conversation here, but reply like a quick DM — not a report.\n\nSource: ${signal.source}\nHeadline: ${signal.title}\nSummary: ${signal.summary}\nYour earlier one-liner: ${signal.why}\nLink: ${signal.url}`,
+    };
+    const history = messages.map((m) => ({ role: m.role, content: m.content }));
     try {
-      const res = await send({ data: { startup, messages: [{ role: "user", content: seed }] } });
+      const res = await send({
+        data: {
+          startup,
+          messages: [signalContext, ...history, { role: "user", content: q }],
+        },
+      });
       setMessages([...next, { role: "assistant", content: res.content }]);
     } catch (e) {
       setMessages([
