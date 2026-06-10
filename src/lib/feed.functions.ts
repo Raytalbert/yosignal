@@ -243,5 +243,22 @@ Return ONLY compact JSON exactly like:
       parsed = {};
     }
     const signals = Array.isArray(parsed.signals) ? parsed.signals : [];
+    // Fallback: if the model returns nothing but we DID pull raw items, surface
+    // a lightly-formatted version of the top raw items so the feed is never empty.
+    if (signals.length === 0 && raw.length > 0) {
+      const fallback = raw.slice(0, 12).map((r) => ({
+        source: r.source.replace(/^News · /, ""),
+        title: r.title,
+        summary: r.summary || r.title,
+        why: `Pulled from your "${r.source.replace(/^News · /, "")}" watch query.`,
+        tag: "Industry",
+        relevance: 60,
+        urgency: "Background",
+        matches: [r.source.replace(/^News · /, "query: ")],
+        url: r.link,
+        date: r.pubDate,
+      }));
+      return { signals: fallback, generatedAt: new Date().toISOString(), note: "fallback-raw" };
+    }
     return { signals, generatedAt: new Date().toISOString() };
   });
