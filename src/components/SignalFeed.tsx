@@ -69,11 +69,32 @@ export function SignalFeed({
   onSignOut?: () => void;
 }) {
   const fetchFeed = useServerFn(generateFeed);
-  const [signals, setSignals] = useState<Signal[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cacheKey = `yosignal.feed.cache.v1::${startup.name}`;
+  const [signals, setSignals] = useState<Signal[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(cacheKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as { signals?: Signal[] };
+      return Array.isArray(parsed.signals) ? parsed.signals : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<Signal | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.localStorage.getItem(cacheKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { updatedAt?: string };
+      return parsed.updatedAt ?? null;
+    } catch {
+      return null;
+    }
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   async function load(withPrefs: FeedPrefs = prefs) {
@@ -81,8 +102,15 @@ export function SignalFeed({
     setError(null);
     try {
       const res = await fetchFeed({ data: { startup, prefs: withPrefs } });
-      setSignals((res.signals as Signal[]) ?? []);
-      setUpdatedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+      const next = (res.signals as Signal[]) ?? [];
+      setSignals(next);
+      const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      setUpdatedAt(stamp);
+      try {
+        window.localStorage.setItem(cacheKey, JSON.stringify({ signals: next, updatedAt: stamp }));
+      } catch {
+        /* ignore */
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load feed.");
     } finally {
@@ -128,10 +156,10 @@ export function SignalFeed({
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-border/60 sticky top-0 z-20 bg-background/80 backdrop-blur-md">
         <div className="max-w-2xl mx-auto px-5 py-4 flex items-center justify-between">
-          <div className="flex items-baseline gap-3 min-w-0">
-            <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-signal">Yo, Signal</span>
+          <div className="flex items-baseline gap-3 min-w-0 flex-wrap">
+            <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-signal whitespace-nowrap">Yo, Signal</span>
             <span className="text-muted-foreground/60">·</span>
-            <span className="font-serif text-lg italic truncate">{startup.name}</span>
+            <span className="font-serif text-lg italic" title={startup.name}>{startup.name}</span>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <button
@@ -268,8 +296,8 @@ function SignalCard({
       onClick={onOpen}
     >
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-10 h-10 rounded-full bg-signal/15 border border-signal/40 flex items-center justify-center font-mono text-[11px] text-signal uppercase shrink-0">
-          {signal.source.slice(0, 2)}
+        <div className="w-10 h-10 rounded-full bg-signal/15 border border-signal/40 flex items-center justify-center font-mono text-[12px] text-signal uppercase shrink-0">
+          {(signal.source.replace(/^[^A-Za-z0-9]+/, "").slice(0, 2) || "··").toUpperCase()}
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-medium truncate">{signal.source}</span>
@@ -538,19 +566,20 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
     setMessages(next);
     setInput("");
     setLoading(true);
-    const seed = `The founder is asking about this specific signal from their personalized feed:
-
-Source: ${signal.source}
-Headline: ${signal.title}
-Summary: ${signal.summary}
-Your prior take: ${signal.why}
-URL: ${signal.url}
-
-Their question: ${q}
-
-Answer conversationally, sharp and opinionated, grounded in their startup context. Drop the briefing structure; treat this like a follow-up DM with their chief of staff.`;
+    // Pre-seed the thread with system context about this signal so subsequent
+    // turns stay grounded — and send the user's actual question as a user turn.
+    const signalContext = {
+      role: "system" as const,
+      content: `The founder just tapped this signal from their feed. Ground the conversation here, but reply like a quick DM — not a report.\n\nSource: ${signal.source}\nHeadline: ${signal.title}\nSummary: ${signal.summary}\nYour earlier one-liner: ${signal.why}\nLink: ${signal.url}`,
+    };
+    const history = messages.map((m) => ({ role: m.role, content: m.content }));
     try {
-      const res = await send({ data: { startup, messages: [{ role: "user", content: seed }] } });
+      const res = await send({
+        data: {
+          startup,
+          messages: [signalContext, ...history, { role: "user", content: q }],
+        },
+      });
       setMessages([...next, { role: "assistant", content: res.content }]);
     } catch (e) {
       setMessages([
