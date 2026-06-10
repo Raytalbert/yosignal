@@ -5,6 +5,7 @@ import { generateFeed } from "@/lib/feed.functions";
 import { sendBriefingMessage } from "@/lib/briefing.functions";
 import type { StartupContext } from "./Onboarding";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useTheme } from "@/lib/use-theme";
 
 interface Signal {
   source: string;
@@ -69,6 +70,7 @@ export function SignalFeed({
   onSignOut?: () => void;
 }) {
   const fetchFeed = useServerFn(generateFeed);
+  const { theme, toggle } = useTheme();
   const cacheKey = `yosignal.feed.cache.v1::${startup.name}`;
   const [signals, setSignals] = useState<Signal[]>(() => {
     if (typeof window === "undefined") return [];
@@ -174,6 +176,13 @@ export function SignalFeed({
               className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground hover:text-signal"
             >
               Tune
+            </button>
+            <button
+              onClick={toggle}
+              className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground hover:text-signal"
+              title="Toggle theme"
+            >
+              {theme === "dark" ? "☀" : "☾"}
             </button>
             <button
               onClick={onReset}
@@ -324,34 +333,24 @@ function SignalCard({
         {signal.why}
       </p>
 
-      {(relevance !== null || (signal.matches && signal.matches.length > 0)) && (
-        <div className="mt-3 space-y-1.5">
-          {relevance !== null && (
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground w-16 shrink-0">
-                Relevance
-              </span>
-              <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
-                <div
-                  className="h-full bg-signal transition-all"
-                  style={{ width: `${relevance}%` }}
-                />
-              </div>
-              <span className="font-mono text-[10px] text-signal w-8 text-right">{relevance}</span>
-            </div>
+      {signal.matches && signal.matches.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5 items-center">
+          {relevance !== null && relevance >= 80 && (
+            <span
+              className="font-mono text-[9px] uppercase tracking-wider text-signal/80"
+              title={`Relevance ${relevance}/100`}
+            >
+              ● high match
+            </span>
           )}
-          {signal.matches && signal.matches.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 pl-[4.25rem]">
-              {signal.matches.slice(0, 4).map((m, i) => (
-                <span
-                  key={`${m}-${i}`}
-                  className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground border border-border/70 rounded-sm px-1.5 py-0.5"
-                >
-                  {m}
-                </span>
-              ))}
-            </div>
-          )}
+          {signal.matches.slice(0, 3).map((m, i) => (
+            <span
+              key={`${m}-${i}`}
+              className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground"
+            >
+              {m}
+            </span>
+          ))}
         </div>
       )}
 
