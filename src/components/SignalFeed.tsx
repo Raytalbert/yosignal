@@ -69,11 +69,32 @@ export function SignalFeed({
   onSignOut?: () => void;
 }) {
   const fetchFeed = useServerFn(generateFeed);
-  const [signals, setSignals] = useState<Signal[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cacheKey = `yosignal.feed.cache.v1::${startup.name}`;
+  const [signals, setSignals] = useState<Signal[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem(cacheKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as { signals?: Signal[] };
+      return Array.isArray(parsed.signals) ? parsed.signals : [];
+    } catch {
+      return [];
+    }
+  });
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<Signal | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = window.localStorage.getItem(cacheKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { updatedAt?: string };
+      return parsed.updatedAt ?? null;
+    } catch {
+      return null;
+    }
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   async function load(withPrefs: FeedPrefs = prefs) {
@@ -81,8 +102,15 @@ export function SignalFeed({
     setError(null);
     try {
       const res = await fetchFeed({ data: { startup, prefs: withPrefs } });
-      setSignals((res.signals as Signal[]) ?? []);
-      setUpdatedAt(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+      const next = (res.signals as Signal[]) ?? [];
+      setSignals(next);
+      const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      setUpdatedAt(stamp);
+      try {
+        window.localStorage.setItem(cacheKey, JSON.stringify({ signals: next, updatedAt: stamp }));
+      } catch {
+        /* ignore */
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load feed.");
     } finally {
