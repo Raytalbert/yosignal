@@ -156,10 +156,10 @@ export function SignalFeed({
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-border/60 sticky top-0 z-20 bg-background/80 backdrop-blur-md">
         <div className="max-w-2xl mx-auto px-5 py-4 flex items-center justify-between">
-          <div className="flex items-baseline gap-3 min-w-0">
-            <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-signal">Yo, Signal</span>
+          <div className="flex items-baseline gap-3 min-w-0 flex-wrap">
+            <span className="font-mono text-[10px] tracking-[0.2em] uppercase text-signal whitespace-nowrap">Yo, Signal</span>
             <span className="text-muted-foreground/60">·</span>
-            <span className="font-serif text-lg italic truncate">{startup.name}</span>
+            <span className="font-serif text-lg italic" title={startup.name}>{startup.name}</span>
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <button
@@ -296,8 +296,8 @@ function SignalCard({
       onClick={onOpen}
     >
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-10 h-10 rounded-full bg-signal/15 border border-signal/40 flex items-center justify-center font-mono text-[11px] text-signal uppercase shrink-0">
-          {signal.source.slice(0, 2)}
+        <div className="w-10 h-10 rounded-full bg-signal/15 border border-signal/40 flex items-center justify-center font-mono text-[12px] text-signal uppercase shrink-0">
+          {(signal.source.replace(/^[^A-Za-z0-9]+/, "").slice(0, 2) || "··").toUpperCase()}
         </div>
         <div className="flex flex-col min-w-0">
           <span className="text-sm font-medium truncate">{signal.source}</span>
