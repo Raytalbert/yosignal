@@ -62,6 +62,10 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
       throw new Error("AI gateway is not configured. Missing LOVABLE_API_KEY.");
     }
 
+    const nameRule = {
+      role: "system" as const,
+      content: `The founder's company is named exactly: "${data.startup.name}". Every time you refer to the company, write it EXACTLY as "${data.startup.name}" — same casing, same punctuation, same hyphens. Do NOT repeat it ("${data.startup.name}${data.startup.name}"), do NOT shorten it to its first letter, do NOT add or drop characters, do NOT wrap it in brackets. If you can't naturally fit the full name, just say "you" or "your company".`,
+    };
     const contextMsg = {
       role: "system" as const,
       content: `Founder's startup context:\n${buildContextLine(data.startup)}`,
@@ -77,6 +81,7 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
         model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
+          nameRule,
           contextMsg,
           ...data.messages,
         ],
