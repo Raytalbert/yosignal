@@ -614,6 +614,80 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop?.();
+        window.speechSynthesis?.cancel?.();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
+  function speak(text: string) {
+    if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      // Strip markdown for cleaner TTS
+      const clean = text
+        .replace(/[*_`#>~]/g, "")
+        .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+        .replace(/\n+/g, ". ")
+        .slice(0, 1200);
+      const u = new SpeechSynthesisUtterance(clean);
+      u.rate = 1.05;
+      u.pitch = 1;
+      const voices = window.speechSynthesis.getVoices();
+      const preferred = voices.find((v) =>
+        /Daniel|Google UK English Male|Microsoft Guy|Microsoft Ryan|Alex/i.test(v.name),
+      );
+      if (preferred) u.voice = preferred;
+      window.speechSynthesis.speak(u);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function startListening() {
+    if (typeof window === "undefined") return;
+    const SR =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      alert("Voice input isn't supported in this browser. Try Chrome or Safari.");
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e: any) => {
+      const transcript = e.results?.[0]?.[0]?.transcript ?? "";
+      if (transcript.trim()) void ask(transcript);
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    try {
+      rec.start();
+    } catch {
+      setListening(false);
+    }
+  }
+
+  function stopListening() {
+    try {
+      recognitionRef.current?.stop?.();
+    } catch {
+      /* ignore */
+    }
+    setListening(false);
+  }
 
   async function ask(q: string) {
     if (!q.trim() || loading) return;
@@ -636,6 +710,7 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         },
       });
       setMessages([...next, { role: "assistant", content: res.content }]);
+      speak(res.content);
     } catch (e) {
       setMessages([
         ...next,
@@ -658,6 +733,29 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         <SheetTitle className="font-serif text-xl text-balance leading-snug">
           {signal.title}
         </SheetTitle>
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !voiceOn;
+              setVoiceOn(next);
+              if (!next) window.speechSynthesis?.cancel?.();
+            }}
+            className={`font-mono text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-full border transition ${
+              voiceOn
+                ? "bg-signal text-signal-foreground border-signal"
+                : "border-border text-muted-foreground hover:text-signal hover:border-signal/60"
+            }`}
+            title="Toggle Jarvis voice mode"
+          >
+            {voiceOn ? "● Voice on" : "○ Voice"}
+          </button>
+          {voiceOn && (
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground italic">
+              Tap the mic to talk
+            </span>
+          )}
+        </div>
       </SheetHeader>
 
       <div className="mt-4 space-y-3 text-sm">
@@ -733,6 +831,21 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         }}
         className="border-t border-border/60 pt-3 mt-3 flex gap-2"
       >
+        {voiceOn && (
+          <button
+            type="button"
+            onClick={() => (listening ? stopListening() : startListening())}
+            disabled={loading}
+            className={`px-3 rounded-md border text-sm transition ${
+              listening
+                ? "bg-destructive/15 border-destructive/50 text-destructive animate-pulse"
+                : "border-border hover:border-signal/60 hover:text-signal"
+            }`}
+            title={listening ? "Stop listening" : "Talk to Signal"}
+          >
+            {listening ? "■" : "🎤"}
+          </button>
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
