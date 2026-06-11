@@ -9,6 +9,7 @@ const StartupContextSchema = z.object({
   competitors: z.array(z.string().max(120)).max(30).optional().default([]),
   categories: z.array(z.string().max(60)).max(20).optional().default([]),
   delivery: z.string().max(60).optional().default("in-app"),
+  companyType: z.string().max(80).optional().default(""),
 });
 
 const MessageSchema = z.object({
@@ -40,6 +41,7 @@ function buildContextLine(c: z.infer<typeof StartupContextSchema>) {
     c.url ? `URL: ${c.url}` : "",
     c.description ? `Description: ${c.description}` : "",
     c.industry ? `Industry: ${c.industry}` : "",
+    c.companyType ? `Company type: ${c.companyType}` : "",
     c.competitors?.length ? `Tracked competitors: ${c.competitors.join(", ")}` : "",
     c.categories?.length ? `Watch categories: ${c.categories.join(", ")}` : "",
     c.delivery ? `Preferred delivery: ${c.delivery}` : "",
@@ -155,5 +157,57 @@ Respond ONLY as compact JSON: {"industry":"...","competitors":["A","B","C"]}`;
       };
     } catch {
       return { industry: "", competitors: [] as string[] };
+    }
+  });
+
+/* ---------------- Focus area suggestion (used by Tune panel) ---------------- */
+
+const FocusSchema = z.object({
+  name: z.string().max(120).optional().default(""),
+  description: z.string().max(1000).optional().default(""),
+  industry: z.string().max(200).optional().default(""),
+  companyType: z.string().max(80).optional().default(""),
+});
+
+export const suggestFocusAreas = createServerFn({ method: "POST" })
+  .inputValidator(FocusSchema)
+  .handler(async ({ data }) => {
+    const apiKey = process.env.LOVABLE_API_KEY;
+    if (!apiKey) throw new Error("AI gateway is not configured.");
+
+    const prompt = `Generate 8–10 short focus-area tags that a founder of THIS startup would actually want to filter their news feed by. Tags should be 2–4 words, specific to the company's domain, mission, customers, and the kinds of news that genuinely move their world. Mix domain-specific themes with universal startup themes (funding, talent, product) where relevant.
+
+Startup: ${data.name || "—"}
+What they're building: ${data.description || "—"}
+Industry: ${data.industry || "—"}
+Company type: ${data.companyType || "—"}
+
+Examples of good tags for a workplace-justice platform: "Legal & Regulatory", "EEOC rulings", "HR tech moves", "Worker organizing", "AI for Good".
+Examples of good tags for a consumer fintech: "Consumer banking", "Card networks", "Regulation & CFPB", "Fraud & security", "Funding & Deals".
+
+Return ONLY compact JSON: {"areas":["tag1","tag2",...]}`;
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (!res.ok) return { areas: [] as string[] };
+    const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    try {
+      const parsed = JSON.parse(payload.choices?.[0]?.message?.content ?? "{}") as { areas?: string[] };
+      return {
+        areas: (parsed.areas ?? [])
+          .filter((a): a is string => typeof a === "string")
+          .map((a) => a.trim())
+          .filter(Boolean)
+          .slice(0, 12),
+      };
+    } catch {
+      return { areas: [] as string[] };
     }
   });
