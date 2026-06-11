@@ -368,7 +368,7 @@ export function Onboarding({ onSubmit }: Props) {
 
         {step === 4 && (
           <Summary
-            data={{ name, url, description, industry, competitors, categories, delivery }}
+            data={{ name, url, description, industry, competitors, categories, delivery, companyType }}
             onBack={() => setStep(3)}
             onConfirm={handleFinish}
           />
