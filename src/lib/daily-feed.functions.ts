@@ -1,7 +1,18 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
-type DailySignal = Record<string, unknown>;
+export interface DailySignal {
+  source: string;
+  title: string;
+  summary: string;
+  why: string;
+  tag: string;
+  url: string;
+  date?: string;
+  relevance?: number;
+  urgency?: string;
+  matches?: string[];
+}
 
 export const getDailyFeed = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -14,7 +25,7 @@ export const getDailyFeed = createServerFn({ method: "GET" })
       .maybeSingle();
     if (error) return { signals: [] as DailySignal[], generatedAt: null as string | null };
     return {
-      signals: ((data?.signals as DailySignal[] | null) ?? []) as DailySignal[],
+      signals: ((data?.signals as unknown as DailySignal[] | null) ?? []),
       generatedAt: (data?.generated_at as string | null) ?? null,
     };
   });
