@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { chatCompletion, CHAT_MODEL_LITE, getGeminiApiKey } from "@/lib/ai-client";
 
 const StartupSchema = z.object({
   name: z.string(),
@@ -231,7 +232,6 @@ async function fetchFallbackRaw(startup: FeedStartup): Promise<RawFeedItem[]> {
 }
 
 async function generateQueries(
-  apiKey: string,
   startup: z.infer<typeof StartupSchema>,
   prefs: z.infer<typeof PrefsSchema>,
 ): Promise<string[]> {
@@ -256,17 +256,16 @@ Rules:
 
 Return ONLY compact JSON: {"queries":["...","..."]}`;
 
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
+  let payload: { choices?: { message?: { content?: string } }[] };
+  try {
+    payload = await chatCompletion({
+      model: CHAT_MODEL_LITE,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
-    }),
-  });
-  if (!res.ok) return [];
-  const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    });
+  } catch {
+    return [];
+  }
   try {
     const parsed = JSON.parse(payload.choices?.[0]?.message?.content ?? "{}") as {
       queries?: string[];
@@ -287,7 +286,6 @@ export type FeedPrefsT = z.infer<typeof PrefsSchema>;
 export async function runFeedGeneration(
   startup: FeedStartup,
   prefsInput: FeedPrefsT | undefined,
-  apiKey: string,
 ) {
     const prefs: FeedPrefsT = prefsInput ?? {
       focusAreas: [],
@@ -297,7 +295,7 @@ export async function runFeedGeneration(
     };
 
     // 1) Ask the model for tailored search queries; fall back to profile-derived queries.
-    const aiQueries = await generateQueries(apiKey, startup, prefs);
+    const aiQueries = await generateQueries(startup, prefs);
     const staticQueries = buildStaticQueries(startup, prefs);
     const competitorQueries = startup.competitors.slice(0, 5);
     const allQueries = Array.from(
@@ -376,26 +374,10 @@ Filter aggressively. Drop anything generic or off-topic. For each kept item, out
 Return ONLY compact JSON exactly like:
 {"signals":[{"source":"...","title":"...","summary":"...","why":"...","tag":"...","relevance":0,"urgency":"...","matches":["..."],"url":"...","date":"..."}]}`;
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-      }),
+    const payload = await chatCompletion({
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
     });
-
-    if (!res.ok) {
-      const t = await res.text();
-      if (res.status === 429) throw new Error("Rate limit reached. Try again shortly.");
-      if (res.status === 402) throw new Error("AI credits exhausted.");
-      throw new Error(`AI gateway error (${res.status}): ${t.slice(0, 200)}`);
-    }
-    const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     const txt = payload.choices?.[0]?.message?.content ?? "{}";
     let parsed: { signals?: unknown } = {};
     try {
@@ -429,7 +411,6 @@ export const generateFeed = createServerFn({ method: "POST" })
     z.object({ startup: StartupSchema, prefs: PrefsSchema.optional() }).parse(d),
   )
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("AI gateway not configured.");
-    return runFeedGeneration(data.startup, data.prefs, apiKey);
+    getGeminiApiKey();
+    return runFeedGeneration(data.startup, data.prefs);
   });

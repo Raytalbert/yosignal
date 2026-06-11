@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiAiStatusRouteImport } from './routes/api/ai-status'
 import { Route as ApiPublicHooksMorningBriefRouteImport } from './routes/api/public/hooks/morning-brief'
 
 const AuthRoute = AuthRouteImport.update({
@@ -29,6 +30,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAiStatusRoute = ApiAiStatusRouteImport.update({
+  id: '/api/ai-status',
+  path: '/api/ai-status',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicHooksMorningBriefRoute =
   ApiPublicHooksMorningBriefRouteImport.update({
     id: '/api/public/hooks/morning-brief',
@@ -40,12 +46,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/auth': typeof AuthRoute
+  '/api/ai-status': typeof ApiAiStatusRoute
   '/api/public/hooks/morning-brief': typeof ApiPublicHooksMorningBriefRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/auth': typeof AuthRoute
+  '/api/ai-status': typeof ApiAiStatusRoute
   '/api/public/hooks/morning-brief': typeof ApiPublicHooksMorningBriefRoute
 }
 export interface FileRoutesById {
@@ -53,20 +61,38 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/auth': typeof AuthRoute
+  '/api/ai-status': typeof ApiAiStatusRoute
   '/api/public/hooks/morning-brief': typeof ApiPublicHooksMorningBriefRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/auth' | '/api/public/hooks/morning-brief'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/auth'
+    | '/api/ai-status'
+    | '/api/public/hooks/morning-brief'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app' | '/auth' | '/api/public/hooks/morning-brief'
-  id: '__root__' | '/' | '/app' | '/auth' | '/api/public/hooks/morning-brief'
+  to:
+    | '/'
+    | '/app'
+    | '/auth'
+    | '/api/ai-status'
+    | '/api/public/hooks/morning-brief'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/auth'
+    | '/api/ai-status'
+    | '/api/public/hooks/morning-brief'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
   AuthRoute: typeof AuthRoute
+  ApiAiStatusRoute: typeof ApiAiStatusRoute
   ApiPublicHooksMorningBriefRoute: typeof ApiPublicHooksMorningBriefRoute
 }
 
@@ -93,6 +119,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/ai-status': {
+      id: '/api/ai-status'
+      path: '/api/ai-status'
+      fullPath: '/api/ai-status'
+      preLoaderRoute: typeof ApiAiStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/hooks/morning-brief': {
       id: '/api/public/hooks/morning-brief'
       path: '/api/public/hooks/morning-brief'
@@ -107,8 +140,19 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
   AuthRoute: AuthRoute,
+  ApiAiStatusRoute: ApiAiStatusRoute,
   ApiPublicHooksMorningBriefRoute: ApiPublicHooksMorningBriefRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

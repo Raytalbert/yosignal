@@ -10,10 +10,11 @@ function toBase64(bytes: Uint8Array) {
 export const synthesizeSpeech = createServerFn({ method: "POST" })
   .inputValidator(z.object({ text: z.string().min(1).max(2000) }))
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("Voice is not configured.");
+    const { getServerEnv } = await import("@/lib/server-env");
+    const apiKey = getServerEnv("OPENAI_API_KEY");
+    if (!apiKey) throw new Error("Cloud voice not configured — using browser voice.");
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/audio/speech", {
+    const res = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,

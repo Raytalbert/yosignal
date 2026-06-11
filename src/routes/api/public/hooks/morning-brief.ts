@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { getGeminiApiKey } from "@/lib/ai-client";
 import { runFeedGeneration, type FeedStartup, type FeedPrefsT } from "@/lib/feed.functions";
 
 export const Route = createFileRoute("/api/public/hooks/morning-brief")({
   server: {
     handlers: {
       POST: async () => {
-        const apiKey = process.env.LOVABLE_API_KEY;
-        if (!apiKey) {
-          return new Response(JSON.stringify({ error: "AI gateway not configured" }), {
+        try {
+          getGeminiApiKey();
+        } catch {
+          return new Response(JSON.stringify({ error: "GEMINI_API_KEY not configured" }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
@@ -35,7 +37,7 @@ export const Route = createFileRoute("/api/public/hooks/morning-brief")({
 
         const results = await Promise.allSettled(
           targets.map(async (t) => {
-            const out = await runFeedGeneration(t.startup, t.prefs, apiKey);
+            const out = await runFeedGeneration(t.startup, t.prefs);
             if (out.signals.length > 0) {
               await supabaseAdmin.from("daily_feeds").upsert({
                 user_id: t.id,

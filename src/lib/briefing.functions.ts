@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { chatCompletion, CHAT_MODEL_LITE, getGeminiApiKey } from "@/lib/ai-client";
 
 const StartupContextSchema = z.object({
   name: z.string().min(1).max(120),
@@ -57,10 +58,7 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
     }),
   )
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) {
-      throw new Error("AI gateway is not configured. Missing LOVABLE_API_KEY.");
-    }
+    getGeminiApiKey();
 
     const nameRule = {
       role: "system" as const,
@@ -71,33 +69,14 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
       content: `Founder's startup context:\n${buildContextLine(data.startup)}`,
     };
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          nameRule,
-          contextMsg,
-          ...data.messages,
-        ],
-      }),
+    const payload = await chatCompletion({
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        nameRule,
+        contextMsg,
+        ...data.messages,
+      ],
     });
-
-    if (!res.ok) {
-      const text = await res.text();
-      if (res.status === 429) throw new Error("Rate limit reached. Try again in a moment.");
-      if (res.status === 402) throw new Error("AI credits exhausted. Add credits in your workspace settings.");
-      throw new Error(`AI gateway error (${res.status}): ${text.slice(0, 200)}`);
-    }
-
-    const payload = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
     const content = payload.choices?.[0]?.message?.content ?? "";
     if (!content) {
       throw new Error("The model returned an empty response. Try again.");
@@ -116,8 +95,7 @@ const SuggestSchema = z.object({
 export const suggestCompetitors = createServerFn({ method: "POST" })
   .inputValidator(SuggestSchema)
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("AI gateway is not configured.");
+    getGeminiApiKey();
     if (!data.url && !data.description) return { competitors: [] as string[], industry: "" };
 
     const prompt = `A founder is configuring a competitive intelligence briefing. From the snippet below, infer:
@@ -129,26 +107,11 @@ ${data.name ? `Name: ${data.name}\n` : ""}${data.url ? `URL: ${data.url}\n` : ""
 
 Respond ONLY as compact JSON: {"industry":"...","competitors":["A","B","C"]}`;
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-      }),
+    const payload = await chatCompletion({
+      model: CHAT_MODEL_LITE,
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
     });
-
-    if (!res.ok) {
-      const text = await res.text();
-      if (res.status === 429) throw new Error("Rate limit reached. Try again in a moment.");
-      if (res.status === 402) throw new Error("AI credits exhausted.");
-      throw new Error(`AI gateway error (${res.status}): ${text.slice(0, 200)}`);
-    }
-    const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     const raw = payload.choices?.[0]?.message?.content ?? "{}";
     try {
       const parsed = JSON.parse(raw) as { industry?: string; competitors?: string[] };
@@ -177,8 +140,7 @@ const FocusSchema = z.object({
 export const suggestFocusAreas = createServerFn({ method: "POST" })
   .inputValidator(FocusSchema)
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("AI gateway is not configured.");
+    getGeminiApiKey();
 
     const prompt = `Generate 8–10 short focus-area tags that a founder of THIS startup would actually want to filter their news feed by. Tags should be 2–4 words, specific to the company's domain, mission, customers, and the kinds of news that genuinely move their world. Mix domain-specific themes with universal startup themes (funding, talent, product) where relevant.
 
@@ -192,17 +154,16 @@ Examples of good tags for a consumer fintech: "Consumer banking", "Card networks
 
 Return ONLY compact JSON: {"areas":["tag1","tag2",...]}`;
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+    let payload: { choices?: { message?: { content?: string } }[] };
+    try {
+      payload = await chatCompletion({
+        model: CHAT_MODEL_LITE,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
-      }),
-    });
-    if (!res.ok) return { areas: [] as string[] };
-    const payload = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+      });
+    } catch {
+      return { areas: [] as string[] };
+    }
     try {
       const parsed = JSON.parse(payload.choices?.[0]?.message?.content ?? "{}") as { areas?: string[] };
       return {
