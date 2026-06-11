@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import ReactMarkdown from "react-markdown";
 import { generateFeed } from "@/lib/feed.functions";
+import { getDailyFeed } from "@/lib/daily-feed.functions";
 import { sendBriefingMessage, suggestFocusAreas } from "@/lib/briefing.functions";
 import type { StartupContext } from "./Onboarding";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -68,6 +69,7 @@ export function SignalFeed({
   onSignOut?: () => void;
 }) {
   const fetchFeed = useServerFn(generateFeed);
+  const fetchDaily = useServerFn(getDailyFeed);
   const { theme, toggle } = useTheme();
   const cacheKey = `yosignal.feed.cache.v1::${startup.name}`;
   const [signals, setSignals] = useState<Signal[]>(() => {
@@ -134,7 +136,30 @@ export function SignalFeed({
   }
 
   useEffect(() => {
-    void load();
+    void (async () => {
+      try {
+        const daily = await fetchDaily({});
+        if (daily.signals.length > 0) {
+          setSignals(daily.signals as unknown as Signal[]);
+          const stamp = daily.generatedAt
+            ? new Date(daily.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+            : "today";
+          setUpdatedAt(stamp);
+          try {
+            window.localStorage.setItem(
+              cacheKey,
+              JSON.stringify({ signals: daily.signals, updatedAt: stamp }),
+            );
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+      } catch {
+        /* fall through to live load */
+      }
+      void load();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

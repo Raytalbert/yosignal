@@ -206,15 +206,15 @@ Return ONLY compact JSON: {"queries":["...","..."]}`;
   }
 }
 
-export const generateFeed = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) =>
-    z.object({ startup: StartupSchema, prefs: PrefsSchema.optional() }).parse(d),
-  )
-  .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("AI gateway not configured.");
+export type FeedStartup = z.infer<typeof StartupSchema>;
+export type FeedPrefsT = z.infer<typeof PrefsSchema>;
 
-    const prefs: z.infer<typeof PrefsSchema> = data.prefs ?? {
+export async function runFeedGeneration(
+  startup: FeedStartup,
+  prefsInput: FeedPrefsT | undefined,
+  apiKey: string,
+) {
+    const prefs: FeedPrefsT = prefsInput ?? {
       focusAreas: [],
       extraKeywords: [],
       mutedTitles: [],
@@ -222,10 +222,10 @@ export const generateFeed = createServerFn({ method: "POST" })
     };
 
     // 1) Ask the model for tailored search queries based on the startup profile.
-    const queries = await generateQueries(apiKey, data.startup, prefs);
+    const queries = await generateQueries(apiKey, startup, prefs);
 
     // 2) Always include competitor names + founder's extra keywords as a baseline.
-    const competitorQueries = data.startup.competitors.slice(0, 5);
+    const competitorQueries = startup.competitors.slice(0, 5);
     const allQueries = Array.from(
       new Set([...prefs.extraKeywords, ...queries, ...competitorQueries]),
     ).slice(0, 12);
@@ -233,7 +233,7 @@ export const generateFeed = createServerFn({ method: "POST" })
     const baselineQueries =
       allQueries.length > 0
         ? allQueries
-        : [data.startup.industry || data.startup.name];
+        : [startup.industry || startup.name];
 
     // Hit Google News + Bing for RSS, plus HN and Reddit JSON for breadth.
     const rssFeeds: FeedSource[] = [
@@ -265,7 +265,7 @@ export const generateFeed = createServerFn({ method: "POST" })
     }
     if (raw.length === 0) {
       // Last-ditch: pull broad industry/companyType feed so the user is never empty-handed.
-      const fallbackQ = data.startup.companyType || data.startup.industry || "startup news";
+      const fallbackQ = startup.companyType || startup.industry || "startup news";
       raw = await fetchAllFeeds([googleNewsFeed(fallbackQ), bingNewsFeed(fallbackQ)]);
       if (raw.length === 0) {
         return { signals: [], generatedAt: new Date().toISOString(), note: "feeds-empty" };
@@ -276,12 +276,12 @@ export const generateFeed = createServerFn({ method: "POST" })
 
 CRITICAL: Be ruthless about relevance. If an item is generic tech news, off-topic, or only tangentially related to this company's actual mission, DROP IT. Better to return 6 sharp items than 14 mediocre ones. The founder of a workplace-justice platform should NOT see "Apple announces new framework" — they should see EEOC rulings, discrimination lawsuits, labor policy, HR-tech moves, etc.
 
-Startup: ${data.startup.name}
-Description: ${data.startup.description || "—"}
-Industry: ${data.startup.industry || "—"}
-Company type: ${data.startup.companyType || "—"}
-Competitors tracked: ${data.startup.competitors.join(", ") || "—"}
-Watch categories: ${data.startup.categories.join(", ") || "—"}
+Startup: ${startup.name}
+Description: ${startup.description || "—"}
+Industry: ${startup.industry || "—"}
+Company type: ${startup.companyType || "—"}
+Competitors tracked: ${startup.competitors.join(", ") || "—"}
+Watch categories: ${startup.categories.join(", ") || "—"}
 Founder focus areas (weight heavily): ${prefs.focusAreas.join(", ") || "—"}
 Founder extra keywords: ${prefs.extraKeywords.join(", ") || "—"}
 Topics founder has marked NOT RELEVANT (avoid these themes — do not surface similar items): ${prefs.mutedTitles.slice(0, 30).join(" | ") || "—"}
@@ -293,7 +293,7 @@ Filter aggressively. Drop anything generic or off-topic. For each kept item, out
 - source: a short publication name (extract from the title if present, e.g. "Reuters", "NYT"; otherwise use the feed source)
 - title: keep close to original (≤ 120 chars)
 - summary: 1–2 punchy sentences in your own words (≤ 280 chars)
-- why: ONE opinionated sentence on why this matters to ${data.startup.name} specifically
+- why: ONE opinionated sentence on why this matters to ${startup.name} specifically
 - tag: one of [AI, Competitor, Funding, Product, Regulatory, Industry, Talent]
 - relevance: integer 0-100, how relevant THIS item is to THIS startup right now (be honest; reserve >85 for genuinely urgent/on-mission items)
 - urgency: one of [Breaking, Today, This week, Background] based on timing AND impact
@@ -350,4 +350,14 @@ Return ONLY compact JSON exactly like:
       return { signals: fallback, generatedAt: new Date().toISOString(), note: "fallback-raw" };
     }
     return { signals, generatedAt: new Date().toISOString() };
+}
+
+export const generateFeed = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z.object({ startup: StartupSchema, prefs: PrefsSchema.optional() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const apiKey = process.env.LOVABLE_API_KEY;
+    if (!apiKey) throw new Error("AI gateway not configured.");
+    return runFeedGeneration(data.startup, data.prefs, apiKey);
   });
