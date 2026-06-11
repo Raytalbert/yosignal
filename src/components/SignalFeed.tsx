@@ -457,10 +457,12 @@ function formatDate(d: string) {
 
 function SettingsPanel({
   initial,
+  focusOptions,
   onSave,
   onCancel,
 }: {
   initial: FeedPrefs;
+  focusOptions: string[];
   onSave: (p: FeedPrefs) => void;
   onCancel: () => void;
 }) {
@@ -495,7 +497,7 @@ function SettingsPanel({
           Focus areas
         </p>
         <div className="flex flex-wrap gap-2">
-          {FOCUS_AREA_OPTIONS.map((a) => {
+          {focusOptions.map((a: string) => {
             const on = focusAreas.includes(a);
             return (
               <button
