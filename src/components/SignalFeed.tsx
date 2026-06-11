@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import ReactMarkdown from "react-markdown";
 import { generateFeed } from "@/lib/feed.functions";
-import { sendBriefingMessage } from "@/lib/briefing.functions";
+import { sendBriefingMessage, suggestFocusAreas } from "@/lib/briefing.functions";
 import type { StartupContext } from "./Onboarding";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useTheme } from "@/lib/use-theme";
@@ -34,13 +34,11 @@ export const DEFAULT_PREFS: FeedPrefs = {
   mutedSources: [],
 };
 
-const FOCUS_AREA_OPTIONS = [
+const FALLBACK_FOCUS_AREAS = [
   "Legal & Regulatory",
   "Product & Launches",
-  "AI for Good",
   "Funding & Deals",
   "Competitor Moves",
-  "Policy & Politics",
   "Talent & Hiring",
   "Customer Stories",
   "Industry Trends",
@@ -98,6 +96,21 @@ export function SignalFeed({
     }
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const focusKey = `yosignal.focus.v1::${startup.name}`;
+  const [focusOptions, setFocusOptions] = useState<string[]>(() => {
+    if (typeof window === "undefined") return FALLBACK_FOCUS_AREAS;
+    try {
+      const raw = window.localStorage.getItem(focusKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as string[];
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+    return FALLBACK_FOCUS_AREAS;
+  });
+  const fetchFocus = useServerFn(suggestFocusAreas);
 
   async function load(withPrefs: FeedPrefs = prefs) {
     setLoading(true);
@@ -124,6 +137,40 @@ export function SignalFeed({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch personalized focus areas once per startup (cached in localStorage).
+  useEffect(() => {
+    let cached = false;
+    try {
+      cached = !!window.localStorage.getItem(focusKey);
+    } catch {
+      /* ignore */
+    }
+    if (cached) return;
+    void (async () => {
+      try {
+        const res = await fetchFocus({
+          data: {
+            name: startup.name,
+            description: startup.description,
+            industry: startup.industry,
+            companyType: startup.companyType ?? "",
+          },
+        });
+        if (res.areas?.length) {
+          setFocusOptions(res.areas);
+          try {
+            window.localStorage.setItem(focusKey, JSON.stringify(res.areas));
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        /* keep fallback */
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startup.name]);
 
   function muteSignal(s: Signal) {
     const next: FeedPrefs = {
@@ -218,8 +265,14 @@ export function SignalFeed({
             </div>
           )}
           {!loading && !error && signals.length === 0 && (
-            <div className="p-10 text-center text-muted-foreground font-serif italic">
-              No signals matched your watchlist yet. Try refresh in a bit.
+            <div className="p-10 text-center text-muted-foreground font-serif italic space-y-3">
+              <p>Pulling fresh signals from across the web…</p>
+              <button
+                onClick={() => void load()}
+                className="font-mono text-[10px] uppercase tracking-[0.18em] text-signal hover:underline"
+              >
+                Try again
+              </button>
             </div>
           )}
           {recent.length > 0 && (
@@ -270,6 +323,7 @@ export function SignalFeed({
         <SheetContent side="right" className="w-full sm:max-w-md p-6 overflow-y-auto">
           <SettingsPanel
             initial={prefs}
+            focusOptions={focusOptions}
             onCancel={() => setSettingsOpen(false)}
             onSave={applyPrefs}
           />
