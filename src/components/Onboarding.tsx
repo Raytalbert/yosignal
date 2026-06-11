@@ -10,7 +10,23 @@ export interface StartupContext {
   competitors: string[];
   categories: string[];
   delivery: string;
+  companyType: string;
 }
+
+const COMPANY_TYPE_OPTIONS = [
+  "B2B SaaS",
+  "Consumer app",
+  "Marketplace",
+  "Dev tool / Infra",
+  "AI / ML",
+  "Fintech",
+  "Healthtech",
+  "Hardware",
+  "Social impact / Nonprofit",
+  "Creator / Media",
+  "E-commerce / DTC",
+  "Other",
+];
 
 const CATEGORY_OPTIONS = [
   { id: "competitor-moves", label: "Competitor moves", hint: "Launches, pricing, hiring, drama" },
@@ -47,11 +63,13 @@ export function Onboarding({ onSubmit }: Props) {
   const [customComp, setCustomComp] = useState("");
   const [categories, setCategories] = useState<string[]>(DEFAULT_CATEGORIES);
   const [delivery, setDelivery] = useState("in-app");
+  const [companyType, setCompanyType] = useState<string>("");
   const [loadingSuggest, setLoadingSuggest] = useState(false);
   const suggestFn = useServerFn(suggestCompetitors);
   const fetchedFor = useRef<string>("");
 
-  const canContinueStep0 = url.trim().length > 0 || description.trim().length > 5;
+  const canContinueStep0 =
+    (url.trim().length > 0 || description.trim().length > 5) && companyType.length > 0;
 
   // Derive a friendly default name from URL if user didn't provide one
   useEffect(() => {
@@ -102,6 +120,7 @@ export function Onboarding({ onSubmit }: Props) {
       competitors,
       categories,
       delivery,
+      companyType,
     });
   }
 
@@ -145,6 +164,27 @@ export function Onboarding({ onSubmit }: Props) {
                 placeholder="Acme"
                 className="input-base"
               />
+            </Field>
+            <Field label="What kind of company is it?">
+              <div className="flex flex-wrap gap-2">
+                {COMPANY_TYPE_OPTIONS.map((t) => {
+                  const on = companyType === t;
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setCompanyType(t)}
+                      className={`text-xs px-3 py-1.5 rounded-full border transition ${
+                        on
+                          ? "bg-signal text-signal-foreground border-signal"
+                          : "border-border text-foreground/80 hover:border-signal/60"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
             </Field>
             <Nav
               right={
