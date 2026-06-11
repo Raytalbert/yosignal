@@ -37,7 +37,10 @@ function bingNewsFeed(query: string): FeedSource {
   };
 }
 
-async function fetchWithTimeout(url: string, ms = 8000) {
+const RSS_TIMEOUT_MS = 12_000;
+const RSS_BATCH_SIZE = 4;
+
+async function fetchWithTimeout(url: string, ms = RSS_TIMEOUT_MS) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
@@ -48,6 +51,10 @@ async function fetchWithTimeout(url: string, ms = 8000) {
   } finally {
     clearTimeout(t);
   }
+}
+
+async function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fetchHackerNews(query: string) {
@@ -134,25 +141,93 @@ function parseFeed(xml: string, source: string) {
   return items;
 }
 
-async function fetchAllFeeds(feeds: FeedSource[]) {
-  const results = await Promise.allSettled(
-    feeds.map(async (f) => {
-      const r = await fetchWithTimeout(f.url, 8000);
-      if (!r.ok) return [];
+type RawFeedItem = {
+  title: string;
+  link: string;
+  summary: string;
+  source: string;
+  pubDate: string;
+};
+
+async function fetchSingleFeed(f: FeedSource, retries = 1): Promise<RawFeedItem[]> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const r = await fetchWithTimeout(f.url);
+      if (!r.ok) {
+        if (attempt < retries) await sleep(400 * (attempt + 1));
+        continue;
+      }
       const xml = await r.text();
-      return parseFeed(xml, f.source);
-    }),
-  );
-  // dedupe by link
+      const items = parseFeed(xml, f.source);
+      if (items.length > 0) return items;
+    } catch {
+      if (attempt < retries) await sleep(400 * (attempt + 1));
+    }
+  }
+  return [];
+}
+
+function dedupeFeedItems(items: RawFeedItem[]) {
   const seen = new Set<string>();
-  const all = results
-    .flatMap((r) => (r.status === "fulfilled" ? r.value : []))
-    .filter((x) => {
-      if (seen.has(x.link)) return false;
-      seen.add(x.link);
-      return true;
-    });
-  return all.slice(0, 120);
+  return items.filter((x) => {
+    if (!x.link || seen.has(x.link)) return false;
+    seen.add(x.link);
+    return true;
+  });
+}
+
+async function fetchAllFeeds(feeds: FeedSource[]) {
+  const all: RawFeedItem[] = [];
+  for (let i = 0; i < feeds.length; i += RSS_BATCH_SIZE) {
+    const batch = feeds.slice(i, i + RSS_BATCH_SIZE);
+    const results = await Promise.allSettled(batch.map((f) => fetchSingleFeed(f)));
+    for (const r of results) {
+      if (r.status === "fulfilled") all.push(...r.value);
+    }
+    if (i + RSS_BATCH_SIZE < feeds.length) await sleep(250);
+  }
+  return dedupeFeedItems(all).slice(0, 120);
+}
+
+function buildStaticQueries(
+  startup: z.infer<typeof StartupSchema>,
+  prefs: z.infer<typeof PrefsSchema>,
+): string[] {
+  const queries: string[] = [
+    ...prefs.extraKeywords,
+    ...prefs.focusAreas,
+    ...startup.competitors.slice(0, 4),
+    ...startup.categories.slice(0, 3),
+    startup.industry,
+    startup.companyType,
+    startup.name,
+  ].filter((q): q is string => typeof q === "string" && q.trim().length > 0);
+  if (startup.description) {
+    const snippet = startup.description.split(/\s+/).slice(0, 5).join(" ");
+    if (snippet.length >= 8) queries.push(snippet);
+  }
+  return Array.from(new Set(queries.map((q) => q.trim()))).slice(0, 8);
+}
+
+async function fetchFallbackRaw(startup: FeedStartup): Promise<RawFeedItem[]> {
+  const fallbackQueries = Array.from(
+    new Set(
+      [
+        startup.industry,
+        startup.companyType,
+        startup.name,
+        startup.industry ? `${startup.industry} news` : "",
+        "startup news",
+      ].filter((q): q is string => typeof q === "string" && q.trim().length > 0),
+    ),
+  );
+  const collected: RawFeedItem[] = [];
+  for (const q of fallbackQueries) {
+    const items = await fetchAllFeeds([googleNewsFeed(q), bingNewsFeed(q)]);
+    collected.push(...items);
+    if (dedupeFeedItems(collected).length >= 12) break;
+  }
+  return dedupeFeedItems(collected);
 }
 
 async function generateQueries(
@@ -221,24 +296,23 @@ export async function runFeedGeneration(
       mutedSources: [],
     };
 
-    // 1) Ask the model for tailored search queries based on the startup profile.
-    const queries = await generateQueries(apiKey, startup, prefs);
-
-    // 2) Always include competitor names + founder's extra keywords as a baseline.
+    // 1) Ask the model for tailored search queries; fall back to profile-derived queries.
+    const aiQueries = await generateQueries(apiKey, startup, prefs);
+    const staticQueries = buildStaticQueries(startup, prefs);
     const competitorQueries = startup.competitors.slice(0, 5);
     const allQueries = Array.from(
-      new Set([...prefs.extraKeywords, ...queries, ...competitorQueries]),
-    ).slice(0, 12);
+      new Set([...prefs.extraKeywords, ...aiQueries, ...staticQueries, ...competitorQueries]),
+    ).slice(0, 10);
 
     const baselineQueries =
       allQueries.length > 0
         ? allQueries
-        : [startup.industry || startup.name];
+        : [startup.industry || startup.name].filter(Boolean);
 
     // Hit Google News + Bing for RSS, plus HN and Reddit JSON for breadth.
     const rssFeeds: FeedSource[] = [
       ...baselineQueries.map(googleNewsFeed),
-      ...baselineQueries.slice(0, 4).map(bingNewsFeed),
+      ...baselineQueries.slice(0, 3).map(bingNewsFeed),
     ];
     const [rssItems, hnItems, redditItems] = await Promise.all([
       fetchAllFeeds(rssFeeds),
@@ -264,9 +338,7 @@ export async function runFeedGeneration(
       });
     }
     if (raw.length === 0) {
-      // Last-ditch: pull broad industry/companyType feed so the user is never empty-handed.
-      const fallbackQ = startup.companyType || startup.industry || "startup news";
-      raw = await fetchAllFeeds([googleNewsFeed(fallbackQ), bingNewsFeed(fallbackQ)]);
+      raw = await fetchFallbackRaw(startup);
       if (raw.length === 0) {
         return { signals: [], generatedAt: new Date().toISOString(), note: "feeds-empty" };
       }

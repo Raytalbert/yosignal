@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import ReactMarkdown from "react-markdown";
 import { generateFeed } from "@/lib/feed.functions";
-import { getDailyFeed } from "@/lib/daily-feed.functions";
+import { FEED_FRESH_MS, getDailyFeed, saveDailyFeed } from "@/lib/daily-feed.functions";
 import { sendBriefingMessage, suggestFocusAreas } from "@/lib/briefing.functions";
+import { formatFeedAge, readFeedCache, writeFeedCache } from "@/lib/feed-cache";
+import { useNaturalVoice } from "@/hooks/use-natural-voice";
 import type { StartupContext } from "./Onboarding";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useTheme } from "@/lib/use-theme";
@@ -70,32 +72,21 @@ export function SignalFeed({
 }) {
   const fetchFeed = useServerFn(generateFeed);
   const fetchDaily = useServerFn(getDailyFeed);
+  const persistDaily = useServerFn(saveDailyFeed);
   const { theme, toggle } = useTheme();
-  const cacheKey = `yosignal.feed.cache.v1::${startup.name}`;
+  const cacheKey = `yosignal.feed.cache.v2::${startup.name}`;
   const [signals, setSignals] = useState<Signal[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = window.localStorage.getItem(cacheKey);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as { signals?: Signal[] };
-      return Array.isArray(parsed.signals) ? parsed.signals : [];
-    } catch {
-      return [];
-    }
+    const cache = readFeedCache(cacheKey);
+    return (cache?.signals as Signal[] | undefined) ?? [];
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<Signal | null>(null);
+  const [generatedAtIso, setGeneratedAtIso] = useState<string | null>(() => {
+    return readFeedCache(cacheKey)?.generatedAtIso ?? null;
+  });
   const [updatedAt, setUpdatedAt] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = window.localStorage.getItem(cacheKey);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { updatedAt?: string };
-      return parsed.updatedAt ?? null;
-    } catch {
-      return null;
-    }
+    return readFeedCache(cacheKey)?.updatedAt ?? null;
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const focusKey = `yosignal.focus.v1::${startup.name}`;
@@ -113,52 +104,82 @@ export function SignalFeed({
     return FALLBACK_FOCUS_AREAS;
   });
   const fetchFocus = useServerFn(suggestFocusAreas);
+  const loadGenRef = useRef(0);
+  const signalCountRef = useRef(signals.length);
+  signalCountRef.current = signals.length;
 
-  async function load(withPrefs: FeedPrefs = prefs) {
-    setLoading(true);
+  function applyFeed(next: Signal[], generatedIso: string) {
+    setSignals(next);
+    const stamp = new Date(generatedIso).toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    setUpdatedAt(stamp);
+    setGeneratedAtIso(generatedIso);
+    writeFeedCache(cacheKey, {
+      signals: next,
+      updatedAt: stamp,
+      generatedAtIso: generatedIso,
+    });
+  }
+
+  function persistFeed(next: Signal[]) {
+    void persistDaily({ data: { signals: next } }).catch(() => {
+      /* non-blocking — local cache still works */
+    });
+  }
+
+  async function load(withPrefs: FeedPrefs = prefs, attempt = 0, forceSpinner = false) {
+    const gen = ++loadGenRef.current;
+    const maxAttempts = 3;
+    const showSpinner = forceSpinner || signalCountRef.current === 0;
+    if (showSpinner) setLoading(true);
     setError(null);
     try {
       const res = await fetchFeed({ data: { startup, prefs: withPrefs } });
+      if (gen !== loadGenRef.current) return;
+
       const next = (res.signals as Signal[]) ?? [];
-      setSignals(next);
-      const stamp = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      setUpdatedAt(stamp);
-      try {
-        window.localStorage.setItem(cacheKey, JSON.stringify({ signals: next, updatedAt: stamp }));
-      } catch {
-        /* ignore */
+      if (next.length === 0 && attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        if (gen !== loadGenRef.current) return;
+        return load(withPrefs, attempt + 1, forceSpinner);
+      }
+
+      if (next.length > 0) {
+        const generatedIso = new Date().toISOString();
+        applyFeed(next, generatedIso);
+        persistFeed(next);
+      } else if (signalCountRef.current === 0) {
+        setError("Couldn't find signals right now. Tap Refresh to try again.");
       }
     } catch (e) {
+      if (gen !== loadGenRef.current) return;
+      if (attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
+        if (gen !== loadGenRef.current) return;
+        return load(withPrefs, attempt + 1, forceSpinner);
+      }
       setError(e instanceof Error ? e.message : "Failed to load feed.");
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   }
 
   useEffect(() => {
     void (async () => {
+      let dailyFresh = false;
       try {
         const daily = await fetchDaily({});
-        if (daily.signals.length > 0) {
-          setSignals(daily.signals as unknown as Signal[]);
-          const stamp = daily.generatedAt
-            ? new Date(daily.generatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-            : "today";
-          setUpdatedAt(stamp);
-          try {
-            window.localStorage.setItem(
-              cacheKey,
-              JSON.stringify({ signals: daily.signals, updatedAt: stamp }),
-            );
-          } catch {
-            /* ignore */
-          }
-          return;
+        if (daily.signals.length > 0 && daily.generatedAt) {
+          applyFeed(daily.signals as unknown as Signal[], daily.generatedAt);
+          const age = Date.now() - new Date(daily.generatedAt).getTime();
+          dailyFresh = Number.isFinite(age) && age < FEED_FRESH_MS;
         }
       } catch {
         /* fall through to live load */
       }
-      void load();
+      if (!dailyFresh) void load();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -237,7 +258,7 @@ export function SignalFeed({
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <button
-              onClick={() => void load()}
+              onClick={() => void load(prefs, 0, true)}
               disabled={loading}
               className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground hover:text-signal disabled:opacity-40"
             >
@@ -274,7 +295,13 @@ export function SignalFeed({
         </div>
         <div className="max-w-2xl mx-auto px-5 pb-3">
           <p className="font-mono text-[10px] tracking-[0.18em] uppercase text-muted-foreground">
-            Your feed{updatedAt ? ` · updated ${updatedAt}` : ""}
+            Your feed
+            {formatFeedAge(generatedAtIso)
+              ? ` · ${formatFeedAge(generatedAtIso)}`
+              : updatedAt
+                ? ` · updated ${updatedAt}`
+                : ""}
+            {loading && signals.length > 0 ? " · refreshing" : ""}
             {prefs.focusAreas.length > 0 && ` · focus: ${prefs.focusAreas.length}`}
             {prefs.mutedTitles.length > 0 && ` · muted: ${prefs.mutedTitles.length}`}
           </p>
@@ -642,41 +669,18 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
   const [voiceOn, setVoiceOn] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<any>(null);
+  const { speak, stop: stopSpeaking, speaking } = useNaturalVoice(voiceOn);
 
   useEffect(() => {
     return () => {
       try {
         recognitionRef.current?.stop?.();
-        window.speechSynthesis?.cancel?.();
+        stopSpeaking();
       } catch {
         /* ignore */
       }
     };
-  }, []);
-
-  function speak(text: string) {
-    if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    try {
-      window.speechSynthesis.cancel();
-      // Strip markdown for cleaner TTS
-      const clean = text
-        .replace(/[*_`#>~]/g, "")
-        .replace(/\[(.*?)\]\(.*?\)/g, "$1")
-        .replace(/\n+/g, ". ")
-        .slice(0, 1200);
-      const u = new SpeechSynthesisUtterance(clean);
-      u.rate = 1.05;
-      u.pitch = 1;
-      const voices = window.speechSynthesis.getVoices();
-      const preferred = voices.find((v) =>
-        /Daniel|Google UK English Male|Microsoft Guy|Microsoft Ryan|Alex/i.test(v.name),
-      );
-      if (preferred) u.voice = preferred;
-      window.speechSynthesis.speak(u);
-    } catch {
-      /* ignore */
-    }
-  }
+  }, [stopSpeaking]);
 
   function startListening() {
     if (typeof window === "undefined") return;
@@ -735,7 +739,7 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         },
       });
       setMessages([...next, { role: "assistant", content: res.content }]);
-      speak(res.content);
+      void speak(res.content);
     } catch (e) {
       setMessages([
         ...next,
@@ -764,20 +768,20 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
             onClick={() => {
               const next = !voiceOn;
               setVoiceOn(next);
-              if (!next) window.speechSynthesis?.cancel?.();
+              if (!next) stopSpeaking();
             }}
             className={`font-mono text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-full border transition ${
               voiceOn
                 ? "bg-signal text-signal-foreground border-signal"
                 : "border-border text-muted-foreground hover:text-signal hover:border-signal/60"
             }`}
-            title="Toggle Jarvis voice mode"
+            title="Toggle natural voice replies"
           >
-            {voiceOn ? "● Voice on" : "○ Voice"}
+            {voiceOn ? (speaking ? "● Speaking" : "● Voice on") : "○ Voice"}
           </button>
           {voiceOn && (
             <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground italic">
-              Tap the mic to talk
+              {speaking ? "Speaking…" : "Tap the mic to talk"}
             </span>
           )}
         </div>

@@ -36,13 +36,13 @@ export const Route = createFileRoute("/api/public/hooks/morning-brief")({
         const results = await Promise.allSettled(
           targets.map(async (t) => {
             const out = await runFeedGeneration(t.startup, t.prefs, apiKey);
-            await supabaseAdmin
-              .from("daily_feeds")
-              .upsert({
+            if (out.signals.length > 0) {
+              await supabaseAdmin.from("daily_feeds").upsert({
                 user_id: t.id,
                 signals: out.signals as unknown as never,
                 generated_at: new Date().toISOString(),
               });
+            }
             return t.id;
           }),
         );
