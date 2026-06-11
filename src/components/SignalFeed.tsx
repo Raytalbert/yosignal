@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import ReactMarkdown from "react-markdown";
 import { generateFeed } from "@/lib/feed.functions";
-import { sendBriefingMessage } from "@/lib/briefing.functions";
+import { sendBriefingMessage, suggestFocusAreas } from "@/lib/briefing.functions";
 import type { StartupContext } from "./Onboarding";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useTheme } from "@/lib/use-theme";
@@ -34,13 +34,11 @@ export const DEFAULT_PREFS: FeedPrefs = {
   mutedSources: [],
 };
 
-const FOCUS_AREA_OPTIONS = [
+const FALLBACK_FOCUS_AREAS = [
   "Legal & Regulatory",
   "Product & Launches",
-  "AI for Good",
   "Funding & Deals",
   "Competitor Moves",
-  "Policy & Politics",
   "Talent & Hiring",
   "Customer Stories",
   "Industry Trends",
@@ -98,6 +96,21 @@ export function SignalFeed({
     }
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const focusKey = `yosignal.focus.v1::${startup.name}`;
+  const [focusOptions, setFocusOptions] = useState<string[]>(() => {
+    if (typeof window === "undefined") return FALLBACK_FOCUS_AREAS;
+    try {
+      const raw = window.localStorage.getItem(focusKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as string[];
+        if (Array.isArray(parsed) && parsed.length) return parsed;
+      }
+    } catch {
+      /* ignore */
+    }
+    return FALLBACK_FOCUS_AREAS;
+  });
+  const fetchFocus = useServerFn(suggestFocusAreas);
 
   async function load(withPrefs: FeedPrefs = prefs) {
     setLoading(true);
@@ -124,6 +137,40 @@ export function SignalFeed({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch personalized focus areas once per startup (cached in localStorage).
+  useEffect(() => {
+    let cached = false;
+    try {
+      cached = !!window.localStorage.getItem(focusKey);
+    } catch {
+      /* ignore */
+    }
+    if (cached) return;
+    void (async () => {
+      try {
+        const res = await fetchFocus({
+          data: {
+            name: startup.name,
+            description: startup.description,
+            industry: startup.industry,
+            companyType: startup.companyType ?? "",
+          },
+        });
+        if (res.areas?.length) {
+          setFocusOptions(res.areas);
+          try {
+            window.localStorage.setItem(focusKey, JSON.stringify(res.areas));
+          } catch {
+            /* ignore */
+          }
+        }
+      } catch {
+        /* keep fallback */
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startup.name]);
 
   function muteSignal(s: Signal) {
     const next: FeedPrefs = {
@@ -218,8 +265,14 @@ export function SignalFeed({
             </div>
           )}
           {!loading && !error && signals.length === 0 && (
-            <div className="p-10 text-center text-muted-foreground font-serif italic">
-              No signals matched your watchlist yet. Try refresh in a bit.
+            <div className="p-10 text-center text-muted-foreground font-serif italic space-y-3">
+              <p>Pulling fresh signals from across the web…</p>
+              <button
+                onClick={() => void load()}
+                className="font-mono text-[10px] uppercase tracking-[0.18em] text-signal hover:underline"
+              >
+                Try again
+              </button>
             </div>
           )}
           {recent.length > 0 && (
@@ -270,6 +323,7 @@ export function SignalFeed({
         <SheetContent side="right" className="w-full sm:max-w-md p-6 overflow-y-auto">
           <SettingsPanel
             initial={prefs}
+            focusOptions={focusOptions}
             onCancel={() => setSettingsOpen(false)}
             onSave={applyPrefs}
           />
@@ -403,10 +457,12 @@ function formatDate(d: string) {
 
 function SettingsPanel({
   initial,
+  focusOptions,
   onSave,
   onCancel,
 }: {
   initial: FeedPrefs;
+  focusOptions: string[];
   onSave: (p: FeedPrefs) => void;
   onCancel: () => void;
 }) {
@@ -441,7 +497,7 @@ function SettingsPanel({
           Focus areas
         </p>
         <div className="flex flex-wrap gap-2">
-          {FOCUS_AREA_OPTIONS.map((a) => {
+          {focusOptions.map((a: string) => {
             const on = focusAreas.includes(a);
             return (
               <button
@@ -558,6 +614,80 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop?.();
+        window.speechSynthesis?.cancel?.();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
+  function speak(text: string) {
+    if (!voiceOn || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      // Strip markdown for cleaner TTS
+      const clean = text
+        .replace(/[*_`#>~]/g, "")
+        .replace(/\[(.*?)\]\(.*?\)/g, "$1")
+        .replace(/\n+/g, ". ")
+        .slice(0, 1200);
+      const u = new SpeechSynthesisUtterance(clean);
+      u.rate = 1.05;
+      u.pitch = 1;
+      const voices = window.speechSynthesis.getVoices();
+      const preferred = voices.find((v) =>
+        /Daniel|Google UK English Male|Microsoft Guy|Microsoft Ryan|Alex/i.test(v.name),
+      );
+      if (preferred) u.voice = preferred;
+      window.speechSynthesis.speak(u);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function startListening() {
+    if (typeof window === "undefined") return;
+    const SR =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      alert("Voice input isn't supported in this browser. Try Chrome or Safari.");
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e: any) => {
+      const transcript = e.results?.[0]?.[0]?.transcript ?? "";
+      if (transcript.trim()) void ask(transcript);
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recognitionRef.current = rec;
+    setListening(true);
+    try {
+      rec.start();
+    } catch {
+      setListening(false);
+    }
+  }
+
+  function stopListening() {
+    try {
+      recognitionRef.current?.stop?.();
+    } catch {
+      /* ignore */
+    }
+    setListening(false);
+  }
 
   async function ask(q: string) {
     if (!q.trim() || loading) return;
@@ -580,6 +710,7 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         },
       });
       setMessages([...next, { role: "assistant", content: res.content }]);
+      speak(res.content);
     } catch (e) {
       setMessages([
         ...next,
@@ -602,6 +733,29 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         <SheetTitle className="font-serif text-xl text-balance leading-snug">
           {signal.title}
         </SheetTitle>
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              const next = !voiceOn;
+              setVoiceOn(next);
+              if (!next) window.speechSynthesis?.cancel?.();
+            }}
+            className={`font-mono text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-full border transition ${
+              voiceOn
+                ? "bg-signal text-signal-foreground border-signal"
+                : "border-border text-muted-foreground hover:text-signal hover:border-signal/60"
+            }`}
+            title="Toggle Jarvis voice mode"
+          >
+            {voiceOn ? "● Voice on" : "○ Voice"}
+          </button>
+          {voiceOn && (
+            <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground italic">
+              Tap the mic to talk
+            </span>
+          )}
+        </div>
       </SheetHeader>
 
       <div className="mt-4 space-y-3 text-sm">
@@ -677,6 +831,21 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         }}
         className="border-t border-border/60 pt-3 mt-3 flex gap-2"
       >
+        {voiceOn && (
+          <button
+            type="button"
+            onClick={() => (listening ? stopListening() : startListening())}
+            disabled={loading}
+            className={`px-3 rounded-md border text-sm transition ${
+              listening
+                ? "bg-destructive/15 border-destructive/50 text-destructive animate-pulse"
+                : "border-border hover:border-signal/60 hover:text-signal"
+            }`}
+            title={listening ? "Stop listening" : "Talk to Signal"}
+          >
+            {listening ? "■" : "🎤"}
+          </button>
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}

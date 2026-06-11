@@ -9,6 +9,7 @@ const StartupSchema = z.object({
   competitors: z.array(z.string()).optional().default([]),
   categories: z.array(z.string()).optional().default([]),
   delivery: z.string().optional().default("in-app"),
+  companyType: z.string().optional().default(""),
 });
 
 const PrefsSchema = z.object({
@@ -26,6 +27,72 @@ function googleNewsFeed(query: string): FeedSource {
     url: `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`,
     source: `News · ${query}`,
   };
+}
+
+function bingNewsFeed(query: string): FeedSource {
+  const q = encodeURIComponent(query);
+  return {
+    url: `https://www.bing.com/news/search?q=${q}&format=rss`,
+    source: `Bing · ${query}`,
+  };
+}
+
+async function fetchWithTimeout(url: string, ms = 8000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, {
+      headers: { "User-Agent": "YoSignal/1.0 (+https://yosignal.app)" },
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function fetchHackerNews(query: string) {
+  try {
+    const r = await fetchWithTimeout(
+      `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=8`,
+      6000,
+    );
+    if (!r.ok) return [];
+    const j = (await r.json()) as { hits?: Array<{ title?: string; url?: string; story_text?: string; created_at?: string; objectID?: string }> };
+    return (j.hits ?? [])
+      .filter((h) => h.title && (h.url || h.objectID))
+      .map((h) => ({
+        title: h.title ?? "",
+        link: h.url ?? `https://news.ycombinator.com/item?id=${h.objectID}`,
+        summary: (h.story_text ?? "").slice(0, 300),
+        source: `Hacker News · ${query}`,
+        pubDate: h.created_at ?? "",
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchReddit(query: string) {
+  try {
+    const r = await fetchWithTimeout(
+      `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=new&t=week&limit=10`,
+      6000,
+    );
+    if (!r.ok) return [];
+    const j = (await r.json()) as { data?: { children?: Array<{ data?: { title?: string; permalink?: string; url?: string; selftext?: string; created_utc?: number; subreddit?: string } }> } };
+    return (j.data?.children ?? [])
+      .map((c) => c.data)
+      .filter((d): d is NonNullable<typeof d> => !!d && !!d.title)
+      .map((d) => ({
+        title: d.title ?? "",
+        link: d.url && /^https?:\/\//.test(d.url) ? d.url : `https://reddit.com${d.permalink ?? ""}`,
+        summary: (d.selftext ?? "").slice(0, 280),
+        source: `r/${d.subreddit ?? "reddit"}`,
+        pubDate: d.created_utc ? new Date(d.created_utc * 1000).toISOString() : "",
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function clean(s: string) {
@@ -70,9 +137,7 @@ function parseFeed(xml: string, source: string) {
 async function fetchAllFeeds(feeds: FeedSource[]) {
   const results = await Promise.allSettled(
     feeds.map(async (f) => {
-      const r = await fetch(f.url, {
-        headers: { "User-Agent": "YoSignal/1.0 (+https://yosignal.app)" },
-      });
+      const r = await fetchWithTimeout(f.url, 8000);
       if (!r.ok) return [];
       const xml = await r.text();
       return parseFeed(xml, f.source);
@@ -87,7 +152,7 @@ async function fetchAllFeeds(feeds: FeedSource[]) {
       seen.add(x.link);
       return true;
     });
-  return all.slice(0, 80);
+  return all.slice(0, 120);
 }
 
 async function generateQueries(
@@ -100,6 +165,7 @@ async function generateQueries(
 Startup: ${startup.name}
 Description: ${startup.description || "—"}
 Industry: ${startup.industry || "—"}
+Company type: ${startup.companyType || "—"}
 Competitors: ${startup.competitors.join(", ") || "—"}
 Watch categories: ${startup.categories.join(", ") || "—"}
 Focus areas (weight heavily): ${prefs.focusAreas.join(", ") || "—"}
@@ -164,11 +230,28 @@ export const generateFeed = createServerFn({ method: "POST" })
       new Set([...prefs.extraKeywords, ...queries, ...competitorQueries]),
     ).slice(0, 12);
 
-    const feeds: FeedSource[] = allQueries.length
-      ? allQueries.map(googleNewsFeed)
-      : [googleNewsFeed(data.startup.industry || data.startup.name)];
+    const baselineQueries =
+      allQueries.length > 0
+        ? allQueries
+        : [data.startup.industry || data.startup.name];
 
-    let raw = await fetchAllFeeds(feeds);
+    // Hit Google News + Bing for RSS, plus HN and Reddit JSON for breadth.
+    const rssFeeds: FeedSource[] = [
+      ...baselineQueries.map(googleNewsFeed),
+      ...baselineQueries.slice(0, 4).map(bingNewsFeed),
+    ];
+    const [rssItems, hnItems, redditItems] = await Promise.all([
+      fetchAllFeeds(rssFeeds),
+      Promise.all(baselineQueries.slice(0, 3).map(fetchHackerNews)).then((a) => a.flat()),
+      Promise.all(baselineQueries.slice(0, 3).map(fetchReddit)).then((a) => a.flat()),
+    ]);
+    // dedupe combined pool by link
+    const seen = new Set<string>();
+    let raw = [...rssItems, ...hnItems, ...redditItems].filter((x) => {
+      if (!x.link || seen.has(x.link)) return false;
+      seen.add(x.link);
+      return true;
+    });
     // hard-filter muted titles / sources before sending to the model
     if (prefs.mutedTitles.length || prefs.mutedSources.length) {
       const muted = prefs.mutedTitles.map((t) => t.toLowerCase().slice(0, 80));
@@ -181,7 +264,12 @@ export const generateFeed = createServerFn({ method: "POST" })
       });
     }
     if (raw.length === 0) {
-      return { signals: [], generatedAt: new Date().toISOString(), note: "feeds-empty" };
+      // Last-ditch: pull broad industry/companyType feed so the user is never empty-handed.
+      const fallbackQ = data.startup.companyType || data.startup.industry || "startup news";
+      raw = await fetchAllFeeds([googleNewsFeed(fallbackQ), bingNewsFeed(fallbackQ)]);
+      if (raw.length === 0) {
+        return { signals: [], generatedAt: new Date().toISOString(), note: "feeds-empty" };
+      }
     }
 
     const prompt = `You curate a personalized "signal feed" for a startup founder — like a feed of tweets, but every item is sharp, relevant, and opinionated. Below are raw news items pulled from queries tailored to this company. Pick the 10–14 that most matter to THIS specific startup, and rewrite each as a tweet-sized card.
@@ -191,6 +279,7 @@ CRITICAL: Be ruthless about relevance. If an item is generic tech news, off-topi
 Startup: ${data.startup.name}
 Description: ${data.startup.description || "—"}
 Industry: ${data.startup.industry || "—"}
+Company type: ${data.startup.companyType || "—"}
 Competitors tracked: ${data.startup.competitors.join(", ") || "—"}
 Watch categories: ${data.startup.categories.join(", ") || "—"}
 Founder focus areas (weight heavily): ${prefs.focusAreas.join(", ") || "—"}
