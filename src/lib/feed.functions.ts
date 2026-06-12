@@ -374,11 +374,17 @@ Filter aggressively. Drop anything generic or off-topic. For each kept item, out
 Return ONLY compact JSON exactly like:
 {"signals":[{"source":"...","title":"...","summary":"...","why":"...","tag":"...","relevance":0,"urgency":"...","matches":["..."],"url":"...","date":"..."}]}`;
 
-    const payload = await chatCompletion({
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-    });
-    const txt = payload.choices?.[0]?.message?.content ?? "{}";
+    let txt = "{}";
+    let aiFailed = false;
+    try {
+      const payload = await chatCompletion({
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+      });
+      txt = payload.choices?.[0]?.message?.content ?? "{}";
+    } catch {
+      aiFailed = true;
+    }
     let parsed: { signals?: unknown } = {};
     try {
       parsed = JSON.parse(txt);
@@ -401,7 +407,11 @@ Return ONLY compact JSON exactly like:
         url: r.link,
         date: r.pubDate,
       }));
-      return { signals: fallback, generatedAt: new Date().toISOString(), note: "fallback-raw" };
+      return {
+        signals: fallback,
+        generatedAt: new Date().toISOString(),
+        note: aiFailed ? "ai-rate-limited" : "fallback-raw",
+      };
     }
     return { signals, generatedAt: new Date().toISOString() };
 }

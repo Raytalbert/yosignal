@@ -27,27 +27,34 @@ export async function chatCompletion(body: {
   response_format?: { type: "json_object" };
 }) {
   const apiKey = getGeminiApiKey();
-  const res = await fetch(GEMINI_OPENAI_BASE, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: body.model ?? CHAT_MODEL,
-      messages: body.messages,
-      ...(body.response_format ? { response_format: body.response_format } : {}),
-    }),
+  const payload = JSON.stringify({
+    model: body.model ?? CHAT_MODEL,
+    messages: body.messages,
+    ...(body.response_format ? { response_format: body.response_format } : {}),
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    if (res.status === 429) throw new Error("Rate limit reached. Try again shortly.");
-    if (res.status === 402 || res.status === 403) {
-      throw new Error("AI quota or API key issue. Check GEMINI_API_KEY in Google AI Studio.");
+  // Retry 429s with exponential backoff (free-tier Gemini rate limits are tight).
+  let lastText = "";
+  let lastStatus = 0;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(GEMINI_OPENAI_BASE, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: payload,
+    });
+    if (res.ok) {
+      return (await res.json()) as { choices?: { message?: { content?: string } }[] };
     }
-    throw new Error(`AI error (${res.status}): ${text.slice(0, 200)}`);
+    lastStatus = res.status;
+    lastText = await res.text();
+    if (res.status === 429 && attempt < 2) {
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      continue;
+    }
+    break;
   }
-
-  return (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  if (lastStatus === 429) throw new Error("Rate limit reached. Try again shortly.");
+  if (lastStatus === 402 || lastStatus === 403) {
+    throw new Error("AI quota or API key issue. Check GEMINI_API_KEY in Google AI Studio.");
+  }
+  throw new Error(`AI error (${lastStatus}): ${lastText.slice(0, 200)}`);
 }
