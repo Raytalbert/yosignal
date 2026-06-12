@@ -156,6 +156,49 @@ type RawFeedItem = {
   pubDate: string;
 };
 
+type AISignalLite = {
+  i?: number;
+  summary?: string;
+  why?: string;
+  tag?: string;
+  relevance?: number;
+  urgency?: string;
+  matches?: string[];
+};
+
+function heuristicTag(title: string): string {
+  const t = title.toLowerCase();
+  if (/\b(raises?|raised|series [a-e]\b|seed round|funding|valuation|acquir|m&a|ipo|spac)\b/.test(t)) return "Funding";
+  if (/\b(lawsuit|sued|sec\b|ftc\b|doj\b|eeoc\b|regulat|ruling|court|bill\b|law\b|policy|sanction|tariff|antitrust)\b/.test(t)) return "Regulatory";
+  if (/\b(ai\b|artificial intelligence|gpt|llm|openai|anthropic|gemini|copilot|machine learning)\b/.test(t)) return "AI";
+  if (/\b(hir|layoff|fired|cfo|cto|ceo|hire|talent|workforce|recruit)\b/.test(t)) return "Talent";
+  if (/\b(launch|releases?|unveils?|announce|introduces?|debut|rolls out|update|version|feature)\b/.test(t)) return "Product";
+  return "Industry";
+}
+
+function heuristicWhy(title: string, startup: FeedStartup, queryLabel?: string): string {
+  const tag = heuristicTag(title);
+  const who = startup.name || "your company";
+  const space = startup.industry || startup.companyType || "your space";
+  const cueParts: string[] = [];
+  if (queryLabel) cueParts.push(`tracked "${queryLabel}"`);
+  const cue = cueParts.length ? ` (${cueParts.join(", ")})` : "";
+  switch (tag) {
+    case "Funding":
+      return `Capital flowing into ${space} reshapes the competitive bar for ${who}${cue}.`;
+    case "Regulatory":
+      return `New rules in ${space} may change compliance or risk for ${who}${cue}.`;
+    case "AI":
+      return `An AI shift that could affect how ${who} builds or competes in ${space}${cue}.`;
+    case "Talent":
+      return `Hiring & workforce signal — useful context for staffing ${who}${cue}.`;
+    case "Product":
+      return `A product move in ${space} worth comparing to ${who}'s roadmap${cue}.`;
+    default:
+      return `Background context on ${space} that frames the market ${who} operates in${cue}.`;
+  }
+}
+
 async function fetchSingleFeed(f: FeedSource, retries = 1): Promise<RawFeedItem[]> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
