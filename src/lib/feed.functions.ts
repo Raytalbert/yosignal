@@ -25,7 +25,7 @@ type FeedSource = { url: string; source: string };
 function googleNewsFeed(query: string): FeedSource {
   const q = encodeURIComponent(query);
   return {
-    url: `https://news.google.com/rss/search?q=${q}&hl=en-US&gl=US&ceid=US:en`,
+    url: `https://news.google.com/rss/search?q=${q}+when:7d&hl=en-US&gl=US&ceid=US:en`,
     source: `News · ${query}`,
   };
 }
@@ -33,7 +33,7 @@ function googleNewsFeed(query: string): FeedSource {
 function bingNewsFeed(query: string): FeedSource {
   const q = encodeURIComponent(query);
   return {
-    url: `https://www.bing.com/news/search?q=${q}&format=rss`,
+    url: `https://www.bing.com/news/search?q=${q}&format=rss&cc=US&setlang=en-US`,
     source: `Bing · ${query}`,
   };
 }
