@@ -1,0 +1,2 @@
+CREATE POLICY "insert own daily feed" ON public.daily_feeds FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "update own daily feed" ON public.daily_feeds FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
