@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import { generateFeed } from "@/lib/feed.functions";
 import { FEED_FRESH_MS, getDailyFeed, saveDailyFeed } from "@/lib/daily-feed.functions";
 import { sendBriefingMessage, suggestFocusAreas } from "@/lib/briefing.functions";
+import { listSavedSignals, saveSignal, unsaveSignal } from "@/lib/saved-signals.functions";
 import { formatFeedAge, readFeedCache, writeFeedCache } from "@/lib/feed-cache";
 import { useNaturalVoice } from "@/hooks/use-natural-voice";
 import type { StartupContext } from "./Onboarding";
@@ -73,6 +74,9 @@ export function SignalFeed({
   const fetchFeed = useServerFn(generateFeed);
   const fetchDaily = useServerFn(getDailyFeed);
   const persistDaily = useServerFn(saveDailyFeed);
+  const fetchSaved = useServerFn(listSavedSignals);
+  const persistSaved = useServerFn(saveSignal);
+  const removeSaved = useServerFn(unsaveSignal);
   const { theme, toggle } = useTheme();
   const cacheKey = `yosignal.feed.cache.v2::${startup.name}`;
   const [signals, setSignals] = useState<Signal[]>(() => {
@@ -89,6 +93,9 @@ export function SignalFeed({
     return readFeedCache(cacheKey)?.updatedAt ?? null;
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<"feed" | "saved">("feed");
+  const [savedSignals, setSavedSignals] = useState<Signal[]>([]);
+  const [savedUrls, setSavedUrls] = useState<Set<string>>(new Set());
   const focusKey = `yosignal.focus.v1::${startup.name}`;
   const [focusOptions, setFocusOptions] = useState<string[]>(() => {
     if (typeof window === "undefined") return FALLBACK_FOCUS_AREAS;
@@ -184,6 +191,45 @@ export function SignalFeed({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Hydrate saved articles once on mount.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetchSaved({});
+        const items = (res.items ?? []) as Signal[];
+        setSavedSignals(items);
+        setSavedUrls(new Set(items.map((s) => s.url)));
+      } catch {
+        /* ignore */
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function toggleSave(s: Signal) {
+    if (savedUrls.has(s.url)) {
+      setSavedUrls((cur) => {
+        const next = new Set(cur);
+        next.delete(s.url);
+        return next;
+      });
+      setSavedSignals((cur) => cur.filter((x) => x.url !== s.url));
+      try {
+        await removeSaved({ data: { url: s.url } });
+      } catch {
+        /* swallow — local state already updated */
+      }
+    } else {
+      setSavedUrls((cur) => new Set(cur).add(s.url));
+      setSavedSignals((cur) => [s, ...cur.filter((x) => x.url !== s.url)]);
+      try {
+        await persistSaved({ data: { signal: s } });
+      } catch {
+        /* swallow */
+      }
+    }
+  }
+
   // Fetch personalized focus areas once per startup (cached in localStorage).
   useEffect(() => {
     let cached = false;
@@ -258,6 +304,15 @@ export function SignalFeed({
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <button
+              onClick={() => setView(view === "feed" ? "saved" : "feed")}
+              className={`font-mono text-[10px] uppercase tracking-[0.18em] ${
+                view === "saved" ? "text-signal" : "text-muted-foreground hover:text-signal"
+              }`}
+              title={view === "feed" ? "View saved articles" : "Back to feed"}
+            >
+              {view === "feed" ? `Saved${savedSignals.length ? ` (${savedSignals.length})` : ""}` : "Feed"}
+            </button>
+            <button
               onClick={() => void load(prefs, 0, true)}
               disabled={loading}
               className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground hover:text-signal disabled:opacity-40"
@@ -310,6 +365,31 @@ export function SignalFeed({
 
       <main className="flex-1">
         <div className="max-w-2xl mx-auto">
+          {view === "saved" ? (
+            savedSignals.length === 0 ? (
+              <div className="p-10 text-center text-muted-foreground font-serif italic">
+                <p>No saved articles yet.</p>
+                <p className="text-xs mt-2 not-italic font-mono uppercase tracking-wider">
+                  Tap "Save" on any card to read it later.
+                </p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {savedSignals.map((s, i) => (
+                  <li key={`s-${s.url}-${i}`}>
+                    <SignalCard
+                      signal={s}
+                      saved={true}
+                      onOpen={() => setActive(s)}
+                      onMute={() => muteSignal(s)}
+                      onToggleSave={() => void toggleSave(s)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : (
+          <>
           {loading && signals.length === 0 && <FeedSkeleton />}
           {error && (
             <div className="m-5 text-sm text-destructive border border-destructive/30 bg-destructive/10 rounded-md p-3">
@@ -333,8 +413,10 @@ export function SignalFeed({
                 <li key={`r-${s.url}-${i}`}>
                   <SignalCard
                     signal={s}
+                    saved={savedUrls.has(s.url)}
                     onOpen={() => setActive(s)}
                     onMute={() => muteSignal(s)}
+                    onToggleSave={() => void toggleSave(s)}
                   />
                 </li>
               ))}
@@ -354,13 +436,17 @@ export function SignalFeed({
                   <li key={`o-${s.url}-${i}`}>
                     <SignalCard
                       signal={s}
+                      saved={savedUrls.has(s.url)}
                       onOpen={() => setActive(s)}
                       onMute={() => muteSignal(s)}
+                      onToggleSave={() => void toggleSave(s)}
                     />
                   </li>
                 ))}
               </ul>
             </>
+          )}
+          </>
           )}
         </div>
       </main>
@@ -387,12 +473,16 @@ export function SignalFeed({
 
 function SignalCard({
   signal,
+  saved,
   onOpen,
   onMute,
+  onToggleSave,
 }: {
   signal: Signal;
+  saved?: boolean;
   onOpen: () => void;
   onMute: () => void;
+  onToggleSave?: () => void;
 }) {
   const tagClass = TAG_COLORS[signal.tag] ?? "text-muted-foreground border-border bg-card/60";
   const relevance = typeof signal.relevance === "number" ? Math.max(0, Math.min(100, signal.relevance)) : null;
@@ -480,6 +570,20 @@ function SignalCard({
           >
             Source ↗
           </a>
+        )}
+        {onToggleSave && (
+          <button
+            className={`font-mono text-[10px] uppercase tracking-wider ${
+              saved ? "text-signal" : "hover:text-signal"
+            }`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSave();
+            }}
+            title={saved ? "Remove from saved" : "Save for later"}
+          >
+            {saved ? "★ Saved" : "☆ Save"}
+          </button>
         )}
         <button
           className="ml-auto font-mono text-[10px] uppercase tracking-wider hover:text-destructive"
