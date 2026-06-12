@@ -113,6 +113,7 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
     return { content };
   });
 
+
 /* ---------------- Competitor suggestion ---------------- */
 
 const SuggestSchema = z.object({
