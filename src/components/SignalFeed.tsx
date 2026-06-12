@@ -366,7 +366,7 @@ export function SignalFeed({
       </main>
 
       <Sheet open={!!active} onOpenChange={(v) => !v && setActive(null)}>
-        <SheetContent side="right" className="w-full sm:max-w-lg flex flex-col p-6">
+        <SheetContent side="right" className="w-full sm:max-w-lg flex flex-col p-3 sm:p-6">
           {active && <SignalThread startup={startup} signal={active} />}
         </SheetContent>
       </Sheet>
@@ -758,11 +758,11 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <SheetHeader className="text-left">
-        <SheetTitle className="font-serif text-xl text-balance leading-snug">
+      <SheetHeader className="text-left space-y-1">
+        <SheetTitle className="font-serif text-base sm:text-xl text-balance leading-snug pr-8">
           {signal.title}
         </SheetTitle>
-        <div className="flex items-center gap-3 pt-1">
+        <div className="flex items-center gap-2 pt-1 flex-wrap">
           <button
             type="button"
             onClick={() => {
@@ -787,7 +787,7 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         </div>
       </SheetHeader>
 
-      <div className="mt-4 space-y-3 text-sm">
+      <div className="mt-3 sm:mt-4 space-y-2 sm:space-y-3 text-sm">
         <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
           <span>{signal.source}</span>
           <span>·</span>
@@ -799,8 +799,8 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
             </>
           )}
         </div>
-        <p className="text-foreground/85 leading-relaxed">{signal.summary}</p>
-        <p className="italic text-signal/90 border-l-2 border-signal/60 pl-3">{signal.why}</p>
+        <p className="text-foreground/85 leading-relaxed text-[13px] sm:text-sm">{signal.summary}</p>
+        <p className="italic text-signal/90 border-l-2 border-signal/60 pl-3 text-[13px] sm:text-sm">{signal.why}</p>
         {signal.url && (
           <a
             href={signal.url}
@@ -813,7 +813,7 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
         )}
       </div>
 
-      <div className="border-t border-border/60 mt-5 pt-4 flex-1 overflow-y-auto space-y-4 min-h-0">
+      <div className="border-t border-border/60 mt-4 pt-3 sm:pt-4 flex-1 overflow-y-auto space-y-3 sm:space-y-4 min-h-0 -mx-1 px-1">
         {messages.length === 0 && (
           <div className="space-y-2">
             <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -836,12 +836,12 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
           m.role === "user" ? (
             <div
               key={i}
-              className="text-sm bg-card border border-border/70 rounded-md p-3 ml-6"
+              className="text-sm bg-card border border-border/70 rounded-md p-3 ml-4 sm:ml-6 break-words"
             >
               {m.content}
             </div>
           ) : (
-            <article key={i} className="text-sm prose-briefing">
+            <article key={i} className="text-sm prose-briefing break-words">
               <ReactMarkdown>{m.content}</ReactMarkdown>
             </article>
           ),
@@ -858,14 +858,14 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
           e.preventDefault();
           void ask(input);
         }}
-        className="border-t border-border/60 pt-3 mt-3 flex gap-2"
+        className="border-t border-border/60 pt-3 mt-3 flex gap-2 items-center"
       >
         {voiceOn && (
           <button
             type="button"
             onClick={() => (listening ? stopListening() : startListening())}
             disabled={loading}
-            className={`px-3 rounded-md border text-sm transition ${
+            className={`px-3 py-2 shrink-0 rounded-md border text-sm transition ${
               listening
                 ? "bg-destructive/15 border-destructive/50 text-destructive animate-pulse"
                 : "border-border hover:border-signal/60 hover:text-signal"
@@ -879,11 +879,11 @@ function SignalThread({ startup, signal }: { startup: StartupContext; signal: Si
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask anything about this signal…"
-          className="flex-1 bg-input border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-signal"
+          className="flex-1 min-w-0 bg-input border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-signal"
         />
         <button
           disabled={loading || !input.trim()}
-          className="bg-signal text-signal-foreground rounded-md px-4 py-2 text-sm font-medium disabled:opacity-40"
+          className="bg-signal text-signal-foreground rounded-md px-3 sm:px-4 py-2 text-sm font-medium disabled:opacity-40 shrink-0"
         >
           Send
         </button>
