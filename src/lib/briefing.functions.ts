@@ -50,10 +50,18 @@ function buildContextLine(c: z.infer<typeof StartupContextSchema>) {
   return bits.join("\n");
 }
 
-function fallbackBriefingReply(startup: z.infer<typeof StartupContextSchema>, messages: z.infer<typeof MessageSchema>[]) {
-  const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content.trim();
+function fallbackBriefingReply(
+  startup: z.infer<typeof StartupContextSchema>,
+  messages: z.infer<typeof MessageSchema>[],
+) {
+  const lastUser = [...messages]
+    .reverse()
+    .find((m) => m.role === "user")
+    ?.content.trim();
   const company = startup.name.trim() || "your company";
-  const topic = lastUser ? `“${lastUser.slice(0, 180)}${lastUser.length > 180 ? "…" : ""}”` : "that";
+  const topic = lastUser
+    ? `“${lastUser.slice(0, 180)}${lastUser.length > 180 ? "…" : ""}”`
+    : "that";
 
   return `I'm getting throttled by the AI provider for a minute, so I can't give the full take yet.
 
@@ -186,7 +194,9 @@ Return ONLY compact JSON: {"areas":["tag1","tag2",...]}`;
       return { areas: [] as string[] };
     }
     try {
-      const parsed = JSON.parse(payload.choices?.[0]?.message?.content ?? "{}") as { areas?: string[] };
+      const parsed = JSON.parse(payload.choices?.[0]?.message?.content ?? "{}") as {
+        areas?: string[];
+      };
       return {
         areas: (parsed.areas ?? [])
           .filter((a): a is string => typeof a === "string")
