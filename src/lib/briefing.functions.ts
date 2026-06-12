@@ -50,6 +50,18 @@ function buildContextLine(c: z.infer<typeof StartupContextSchema>) {
   return bits.join("\n");
 }
 
+function fallbackBriefingReply(startup: z.infer<typeof StartupContextSchema>, messages: z.infer<typeof MessageSchema>[]) {
+  const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content.trim();
+  const company = startup.name.trim() || "your company";
+  const topic = lastUser ? `“${lastUser.slice(0, 180)}${lastUser.length > 180 ? "…" : ""}”` : "that";
+
+  return `I'm getting throttled by the AI provider for a minute, so I can't give the full take yet.
+
+For ${company}, treat ${topic} as a signal to sanity-check against three things: whether it changes customer urgency, whether it shifts competitor positioning, and whether it creates a move you can make today.
+
+Try again in a bit and I'll give you the sharper read.`;
+}
+
 export const sendBriefingMessage = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({
@@ -69,14 +81,23 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
       content: `Founder's startup context:\n${buildContextLine(data.startup)}`,
     };
 
-    const payload = await chatCompletion({
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        nameRule,
-        contextMsg,
-        ...data.messages,
-      ],
-    });
+    let payload: { choices?: { message?: { content?: string } }[] };
+    try {
+      payload = await chatCompletion({
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          nameRule,
+          contextMsg,
+          ...data.messages,
+        ],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("Rate limit") || message.includes("quota") || message.includes("429")) {
+        return { content: fallbackBriefingReply(data.startup, data.messages), limited: true };
+      }
+      throw error;
+    }
     const content = payload.choices?.[0]?.message?.content ?? "";
     if (!content) {
       throw new Error("The model returned an empty response. Try again.");
