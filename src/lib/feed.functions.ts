@@ -183,6 +183,21 @@ function dedupeFeedItems(items: RawFeedItem[]) {
   });
 }
 
+// Drop items that are clearly non-English or from foreign-only outlets.
+// We bias the feed to US/English because that's what most founders here read.
+const FOREIGN_TLD_RE = /\.(ma|in|pk|ng|ke|za|br|mx|ar|cl|co|pe|ru|cn|jp|kr|tw|vn|th|id|my|ph|tr|gr|pl|cz|hu|ro|bg|ua|sa|ae|qa|eg)\//i;
+const NON_LATIN_RE = /[\u0400-\u04FF\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]/;
+function isEnglishUS(item: RawFeedItem): boolean {
+  if (NON_LATIN_RE.test(item.title)) return false;
+  try {
+    const host = new URL(item.link).hostname.toLowerCase();
+    if (FOREIGN_TLD_RE.test(host + "/")) return false;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
 async function fetchAllFeeds(feeds: FeedSource[]) {
   const all: RawFeedItem[] = [];
   for (let i = 0; i < feeds.length; i += RSS_BATCH_SIZE) {
