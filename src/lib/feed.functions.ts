@@ -104,17 +104,23 @@ async function fetchReddit(query: string) {
 }
 
 function clean(s: string) {
-  return s
-    .replace(/<!\[CDATA\[|\]\]>/g, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
-    .trim();
+  const decode = (str: string) =>
+    str
+      .replace(/<!\[CDATA\[|\]\]>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&#39;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  // Decode entities first so any escaped HTML (common in Google News
+  // descriptions: &lt;a href=...&gt;) becomes real tags we can strip.
+  // Loop twice to catch double-escaped sequences.
+  let out = decode(decode(s));
+  out = out.replace(/<[^>]+>/g, " ");
+  // Drop residual url fragments that survived because they had no closing >
+  out = out.replace(/https?:\/\/\S+/g, " ");
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function parseFeed(xml: string, source: string) {
