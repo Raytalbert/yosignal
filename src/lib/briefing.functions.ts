@@ -113,7 +113,6 @@ export const sendBriefingMessage = createServerFn({ method: "POST" })
     return { content };
   });
 
-
 /* ---------------- Competitor suggestion ---------------- */
 
 const SuggestSchema = z.object({
@@ -157,6 +156,7 @@ Respond ONLY as compact JSON: {"industry":"...","competitors":["A","B","C"]}`;
       return { industry: "", competitors: [] as string[] };
     }
   });
+
 
 /* ---------------- Focus area suggestion (used by Tune panel) ---------------- */
 
