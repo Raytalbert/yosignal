@@ -157,7 +157,6 @@ Respond ONLY as compact JSON: {"industry":"...","competitors":["A","B","C"]}`;
     }
   });
 
-
 /* ---------------- Focus area suggestion (used by Tune panel) ---------------- */
 
 const FocusSchema = z.object({
