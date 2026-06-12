@@ -345,6 +345,8 @@ export async function runFeedGeneration(
       seen.add(x.link);
       return true;
     });
+    // Bias to English/US sources — the founder is in the US and wants US-relevant news.
+    raw = raw.filter(isEnglishUS);
     // hard-filter muted titles / sources before sending to the model
     if (prefs.mutedTitles.length || prefs.mutedSources.length) {
       const muted = prefs.mutedTitles.map((t) => t.toLowerCase().slice(0, 80));
@@ -358,42 +360,51 @@ export async function runFeedGeneration(
     }
     if (raw.length === 0) {
       raw = await fetchFallbackRaw(startup);
+      raw = raw.filter(isEnglishUS);
       if (raw.length === 0) {
         return { signals: [], generatedAt: new Date().toISOString(), note: "feeds-empty" };
       }
     }
 
-    const prompt = `You curate a personalized "signal feed" for a startup founder — like a feed of tweets, but every item is sharp, relevant, and opinionated. Below are raw news items pulled from queries tailored to this company. Pick the 12–20 that most matter to THIS specific startup (aim for 15+ when the raw pool supports it; never return fewer than 8 if relevant items exist), and rewrite each as a tweet-sized card.
+    // Token optimization: send only the top ~30 items with short summaries.
+    // Free-tier Gemini chokes on big payloads — we keep the pool tight on purpose.
+    const aiInput = raw.slice(0, 30).map((x, i) => ({
+      i,
+      s: x.source.replace(/^News · /, "").replace(/^Bing · /, "").slice(0, 40),
+      t: x.title.slice(0, 140),
+      d: x.pubDate ? x.pubDate.slice(0, 10) : "",
+    }));
 
-CRITICAL: Be ruthless about relevance. If an item is generic tech news, off-topic, or only tangentially related to this company's actual mission, DROP IT. Better to return 6 sharp items than 14 mediocre ones. The founder of a workplace-justice platform should NOT see "Apple announces new framework" — they should see EEOC rulings, discrimination lawsuits, labor policy, HR-tech moves, etc.
+    const ctx = [
+      startup.name && `co=${startup.name}`,
+      startup.industry && `ind=${startup.industry}`,
+      startup.description && `desc=${startup.description.slice(0, 140)}`,
+      prefs.focusAreas.length && `focus=${prefs.focusAreas.slice(0, 6).join("|")}`,
+      prefs.extraKeywords.length && `kw=${prefs.extraKeywords.slice(0, 6).join("|")}`,
+      startup.competitors.length && `comp=${startup.competitors.slice(0, 5).join("|")}`,
+      prefs.mutedTitles.length && `mute=${prefs.mutedTitles.slice(0, 8).map((m) => m.slice(0, 40)).join("|")}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
 
-Startup: ${startup.name}
-Description: ${startup.description || "—"}
-Industry: ${startup.industry || "—"}
-Company type: ${startup.companyType || "—"}
-Competitors tracked: ${startup.competitors.join(", ") || "—"}
-Watch categories: ${startup.categories.join(", ") || "—"}
-Founder focus areas (weight heavily): ${prefs.focusAreas.join(", ") || "—"}
-Founder extra keywords: ${prefs.extraKeywords.join(", ") || "—"}
-Topics founder has marked NOT RELEVANT (avoid these themes — do not surface similar items): ${prefs.mutedTitles.slice(0, 30).join(" | ") || "—"}
+    const prompt = `Curate a personalized news feed for a US-based founder. Pick the most relevant 12-18 items for THIS company and enrich each with insight + accurate tag.
 
-Raw items (JSON):
-${JSON.stringify(raw.map((x) => ({ source: x.source, title: x.title, summary: x.summary, url: x.link, date: x.pubDate })))}
+Context:
+${ctx}
 
-Filter aggressively. Drop anything generic or off-topic. For each kept item, output:
-- source: a short publication name (extract from the title if present, e.g. "Reuters", "NYT"; otherwise use the feed source)
-- title: keep close to original (≤ 120 chars)
-- summary: 1–2 punchy sentences in your own words (≤ 280 chars)
-- why: ONE opinionated sentence on why this matters to ${startup.name} specifically
-- tag: one of [AI, Competitor, Funding, Product, Regulatory, Industry, Talent]
-- relevance: integer 0-100, how relevant THIS item is to THIS startup right now (be honest; reserve >85 for genuinely urgent/on-mission items)
-- urgency: one of [Breaking, Today, This week, Background] based on timing AND impact
-- matches: 1-3 short tags (≤ 22 chars each) describing WHY it matched — e.g. "focus: legal/regulatory", "matches: discrimination", "competitor: Lattice"
-- url: original link
-- date: original date if present
+Items (index|source|title|date):
+${aiInput.map((x) => `${x.i}|${x.s}|${x.t}|${x.d}`).join("\n")}
 
-Return ONLY compact JSON exactly like:
-{"signals":[{"source":"...","title":"...","summary":"...","why":"...","tag":"...","relevance":0,"urgency":"...","matches":["..."],"url":"...","date":"..."}]}`;
+Drop generic/off-topic items and anything matching muted themes. For each kept item return:
+- i: the original index
+- summary: 1 punchy sentence rewrite (<=200 chars)
+- why: ONE specific insight tying this story to ${startup.name}'s business (<=180 chars). NEVER say "Surfaced from your watch query" — that's not insight.
+- tag: pick the BEST fit from [AI, Competitor, Funding, Product, Regulatory, Industry, Talent]. Use Funding for raises/M&A, Regulatory for laws/lawsuits/gov, AI for AI/ML stories, Competitor only if it names a tracked competitor, Talent for hiring/layoffs, Product for launches, Industry only as last resort.
+- relevance: 0-100 (reserve >85 for genuinely urgent/on-mission items)
+- urgency: [Breaking, Today, This week, Background]
+- matches: 1-2 short tags (<=22 chars) like "focus: regulatory" or "competitor: Lattice"
+
+Return ONLY: {"signals":[{"i":0,"summary":"...","why":"...","tag":"...","relevance":0,"urgency":"...","matches":["..."]}]}`;
 
     let txt = "{}";
     let aiFailed = false;
@@ -412,7 +423,33 @@ Return ONLY compact JSON exactly like:
     } catch {
       parsed = {};
     }
-    const signals = Array.isArray(parsed.signals) ? parsed.signals : [];
+    // Re-hydrate AI output by index, so we keep source/title/url/date verbatim.
+    const aiSignals: AISignalLite[] = Array.isArray(parsed.signals)
+      ? (parsed.signals as AISignalLite[])
+      : [];
+    const signals = aiSignals
+      .map((s) => {
+        const idx = typeof s.i === "number" ? s.i : -1;
+        const r = raw[idx];
+        if (!r) return null;
+        const queryLabel = r.source.replace(/^News · /, "").replace(/^Bing · /, "");
+        const titleMatch = r.title.match(/\s[–-]\s([^–-]+)$/);
+        const publisher = titleMatch?.[1]?.trim() || queryLabel;
+        const cleanTitle = r.title.replace(/\s[–-]\s[^–-]+$/, "").trim();
+        return {
+          source: publisher,
+          title: cleanTitle,
+          summary: s.summary || r.summary || cleanTitle,
+          why: s.why || heuristicWhy(cleanTitle, startup),
+          tag: s.tag || heuristicTag(cleanTitle),
+          relevance: typeof s.relevance === "number" ? s.relevance : 60,
+          urgency: s.urgency || "Background",
+          matches: Array.isArray(s.matches) ? s.matches.slice(0, 3) : [],
+          url: r.link,
+          date: r.pubDate,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
     // Fallback: if the model returns nothing but we DID pull raw items, surface
     // a lightly-formatted version of the top raw items so the feed is never empty.
     if (signals.length === 0 && raw.length > 0) {
@@ -448,8 +485,8 @@ Return ONLY compact JSON exactly like:
           source: publisher,
           title: cleanTitle,
           summary: r.summary || cleanTitle,
-          why: `Surfaced from your "${queryLabel}" watch query.`,
-          tag: "Industry",
+          why: heuristicWhy(cleanTitle, startup, queryLabel),
+          tag: heuristicTag(cleanTitle),
           relevance: 60,
           urgency: "Background",
           matches: [`query: ${queryLabel}`],
