@@ -104,17 +104,23 @@ async function fetchReddit(query: string) {
 }
 
 function clean(s: string) {
-  return s
-    .replace(/<!\[CDATA\[|\]\]>/g, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
-    .trim();
+  const decode = (str: string) =>
+    str
+      .replace(/<!\[CDATA\[|\]\]>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&#39;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  // Decode entities first so any escaped HTML (common in Google News
+  // descriptions: &lt;a href=...&gt;) becomes real tags we can strip.
+  // Loop twice to catch double-escaped sequences.
+  let out = decode(decode(s));
+  out = out.replace(/<[^>]+>/g, " ");
+  // Drop residual url fragments that survived because they had no closing >
+  out = out.replace(/https?:\/\/\S+/g, " ");
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function parseFeed(xml: string, source: string) {
@@ -395,18 +401,47 @@ Return ONLY compact JSON exactly like:
     // Fallback: if the model returns nothing but we DID pull raw items, surface
     // a lightly-formatted version of the top raw items so the feed is never empty.
     if (signals.length === 0 && raw.length > 0) {
-      const fallback = raw.slice(0, 18).map((r) => ({
-        source: r.source.replace(/^News · /, ""),
-        title: r.title,
-        summary: r.summary || r.title,
-        why: `Pulled from your "${r.source.replace(/^News · /, "")}" watch query.`,
-        tag: "Industry",
-        relevance: 60,
-        urgency: "Background",
-        matches: [r.source.replace(/^News · /, "query: ")],
-        url: r.link,
-        date: r.pubDate,
-      }));
+      // Round-robin across queries/sources so we don't dump 18 results from
+      // the first query — the founder sees variety even when the AI is rate-limited.
+      const buckets = new Map<string, RawFeedItem[]>();
+      for (const r of raw) {
+        const key = r.source;
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key)!.push(r);
+      }
+      const interleaved: RawFeedItem[] = [];
+      let added = true;
+      while (added && interleaved.length < 18) {
+        added = false;
+        for (const list of buckets.values()) {
+          const next = list.shift();
+          if (next) {
+            interleaved.push(next);
+            added = true;
+            if (interleaved.length >= 18) break;
+          }
+        }
+      }
+      // Extract a clean publication name from the title's trailing " - Publisher" suffix
+      // (Google News convention), falling back to the query label.
+      const fallback = interleaved.map((r) => {
+        const queryLabel = r.source.replace(/^News · /, "").replace(/^Bing · /, "");
+        const titleMatch = r.title.match(/\s[–-]\s([^–-]+)$/);
+        const publisher = titleMatch?.[1]?.trim() || queryLabel;
+        const cleanTitle = r.title.replace(/\s[–-]\s[^–-]+$/, "").trim();
+        return {
+          source: publisher,
+          title: cleanTitle,
+          summary: r.summary || cleanTitle,
+          why: `Surfaced from your "${queryLabel}" watch query.`,
+          tag: "Industry",
+          relevance: 60,
+          urgency: "Background",
+          matches: [`query: ${queryLabel}`],
+          url: r.link,
+          date: r.pubDate,
+        };
+      });
       return {
         signals: fallback,
         generatedAt: new Date().toISOString(),
