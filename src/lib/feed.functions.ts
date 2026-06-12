@@ -342,7 +342,7 @@ export async function runFeedGeneration(
       }
     }
 
-    const prompt = `You curate a personalized "signal feed" for a startup founder — like a feed of tweets, but every item is sharp, relevant, and opinionated. Below are raw news items pulled from queries tailored to this company. Pick the 10–14 that most matter to THIS specific startup, and rewrite each as a tweet-sized card.
+    const prompt = `You curate a personalized "signal feed" for a startup founder — like a feed of tweets, but every item is sharp, relevant, and opinionated. Below are raw news items pulled from queries tailored to this company. Pick the 12–20 that most matter to THIS specific startup (aim for 15+ when the raw pool supports it; never return fewer than 8 if relevant items exist), and rewrite each as a tweet-sized card.
 
 CRITICAL: Be ruthless about relevance. If an item is generic tech news, off-topic, or only tangentially related to this company's actual mission, DROP IT. Better to return 6 sharp items than 14 mediocre ones. The founder of a workplace-justice platform should NOT see "Apple announces new framework" — they should see EEOC rulings, discrimination lawsuits, labor policy, HR-tech moves, etc.
 
@@ -389,7 +389,7 @@ Return ONLY compact JSON exactly like:
     // Fallback: if the model returns nothing but we DID pull raw items, surface
     // a lightly-formatted version of the top raw items so the feed is never empty.
     if (signals.length === 0 && raw.length > 0) {
-      const fallback = raw.slice(0, 12).map((r) => ({
+      const fallback = raw.slice(0, 18).map((r) => ({
         source: r.source.replace(/^News · /, ""),
         title: r.title,
         summary: r.summary || r.title,
