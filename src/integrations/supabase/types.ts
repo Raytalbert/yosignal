@@ -32,6 +32,30 @@ export type Database = {
         }
         Relationships: []
       }
+      saved_signals: {
+        Row: {
+          id: string
+          saved_at: string
+          signal: Json
+          url: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          saved_at?: string
+          signal: Json
+          url: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          saved_at?: string
+          signal?: Json
+          url?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
