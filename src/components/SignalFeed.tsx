@@ -78,7 +78,7 @@ export function SignalFeed({
   const persistSaved = useServerFn(saveSignal);
   const removeSaved = useServerFn(unsaveSignal);
   const { theme, toggle } = useTheme();
-  const cacheKey = `yosignal.feed.cache.v2::${startup.name}`;
+  const cacheKey = `yosignal.feed.cache.v2::${startup.name}::${JSON.stringify(prefs).length}::${(prefs.focusAreas ?? []).join(",").slice(0,40)}::${(prefs.extraKeywords ?? []).join(",").slice(0,40)}`;
   const [signals, setSignals] = useState<Signal[]>(() => {
     const cache = readFeedCache(cacheKey);
     return (cache?.signals as Signal[] | undefined) ?? [];
