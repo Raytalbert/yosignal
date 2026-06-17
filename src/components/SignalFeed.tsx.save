@@ -533,13 +533,24 @@ export function SignalFeed({
                               setAgentCmd(cmd);
                               setAgentRunning(true);
                               const sys = `You are Yo, Signal — an AI chief of staff for ${startup.name}. Company: ${startup.description || ""}. Competitors: ${(startup.competitors || []).join(", ")}. Signal: "${active.title}". Why it matters: ${active.why}. Complete the command fully. Return real, specific, actionable output. No hedging.`;
-                              fetch("https://api.anthropic.com/v1/messages", {
+                              setAgentResult(
+                                  text
+                                    .replace(/#{1,6}\s+/g, "")
+                                    .replace(/\*\*(.*?)\*\*/g, "$1")
+                                                     fetch("https://api.anthropic.com/v1/messages", {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
                                 body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, system: sys, messages: [{ role: "user", content: cmd }] })
                               }).then(r => r.json()).then(d => {
                                 const text = d.content?.map((b: {type: string; text?: string}) => b.text || "").join("") || "Something went wrong.";
-                                setAgentResult(text.replace(/#{1,6}\s+/g, "").replace(/\*\*(.*?)\*\*/g, "$1").replace(/\*(.*?)\*/g, "$1").replace(/\n{3,}/g, "\n\n").trim());
+                                setAgentResult(
+                                  text
+                                    .replace(/#{1,6}\s+/g, "")
+                                    .replace(/\*\*(.*?)\*\*/g, "$1")
+                                    .replace(/\*(.*?)\*/g, "$1")
+                                    .replace(/\n{3,}/g, "\n\n")
+                                    .trim()
+                                );
                                 setAgentRunning(false);
                                 if (window.speechSynthesis) {
                                   const u = new SpeechSynthesisUtterance("Done. Your result is ready.");
@@ -549,8 +560,10 @@ export function SignalFeed({
                                   u.rate = 1.1;
                                   window.speechSynthesis.speak(u);
                                 }
-                              }).catch(() => { setAgentResult("Connection error. Check your API key."); setAgentRunning(false); });
-                            }}
+                              }).catch(() => {
+                                setAgentResult("Connection error. Check your API key.");
+                                setAgentRunning(false);
+                              });
                             className="text-left text-sm font-serif italic text-foreground/80 border border-border/70 rounded-md px-3 py-2 hover:border-signal/60 hover:text-signal transition disabled:opacity-40"
                           >
                             {cmd}
@@ -570,7 +583,10 @@ export function SignalFeed({
                             body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, system: sys, messages: [{ role: "user", content: cmd }] })
                           }).then(r => r.json()).then(d => {
                             const text = d.content?.map((b: {type: string; text?: string}) => b.text || "").join("") || "Something went wrong.";
-                            setAgentResult(text.replace(/#{1,6}\s+/g, "").replace(/\*\*(.*?)\*\*/g, "$1").replace(/\*(.*?)\*/g, "$1").replace(/\n{3,}/g, "\n\n").trim());
+                            setAgentResult(text.replace(.replace(/
+{3,}/g, "
+
+").trim());
                             setAgentRunning(false);
                           }).catch(() => { setAgentResult("Connection error."); setAgentRunning(false); });
                         }}
