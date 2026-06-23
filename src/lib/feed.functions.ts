@@ -123,27 +123,62 @@ function clean(s: string) {
   return out.replace(/\s+/g, " ").trim();
 }
 
+function extractRealSource(rawTitle: string, fallback: string): { title: string; sourceName: string } {
+  // Google News titles are formatted "Headline - Publisher Name"
+  const dashIdx = rawTitle.lastIndexOf(" - ");
+  if (dashIdx > 10 && dashIdx > rawTitle.length - 60) {
+    const publisher = rawTitle.slice(dashIdx + 3).trim();
+    const headline = rawTitle.slice(0, dashIdx).trim();
+    if (publisher && publisher.length < 60) {
+      return { title: headline, sourceName: publisher };
+    }
+  }
+  return { title: rawTitle, sourceName: fallback };
+}
+
+function extractRealLink(descriptionHtml: string, fallbackLink: string): string {
+  // Google News description often contains the real article link as an <a href="...">
+  const anchorMatch = descriptionHtml.match(/<a[^>]+href="([^"]+)"/i);
+  if (anchorMatch?.[1] && !anchorMatch[1].includes("news.google.com")) {
+    return anchorMatch[1];
+  }
+  return fallbackLink;
+}
+
 function parseFeed(xml: string, source: string) {
   const items: { title: string; link: string; summary: string; source: string; pubDate: string }[] = [];
   const blocks = xml.match(/<item[\s\S]*?<\/item>/gi) ?? xml.match(/<entry[\s\S]*?<\/entry>/gi) ?? [];
+  const isGoogleNews = source.startsWith("News · ");
   for (const b of blocks.slice(0, 12)) {
-    const title = clean(b.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
+    const rawTitle = clean(b.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "");
     const linkHref = b.match(/<link[^>]*href="([^"]+)"/i)?.[1];
     const linkTag = b.match(/<link>([\s\S]*?)<\/link>/i)?.[1];
-    const link = (linkHref ?? linkTag ?? "").trim();
-    const summary = clean(
+    const rawLink = (linkHref ?? linkTag ?? "").trim();
+    const rawDescription =
       b.match(/<description[^>]*>([\s\S]*?)<\/description>/i)?.[1] ??
-        b.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i)?.[1] ??
-        b.match(/<content[^>]*>([\s\S]*?)<\/content>/i)?.[1] ??
-        "",
-    ).slice(0, 360);
+      b.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i)?.[1] ??
+      b.match(/<content[^>]*>([\s\S]*?)<\/content>/i)?.[1] ??
+      "";
+    const summary = clean(rawDescription).slice(0, 360);
     const pubDate = clean(
       b.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i)?.[1] ??
         b.match(/<updated[^>]*>([\s\S]*?)<\/updated>/i)?.[1] ??
         b.match(/<published[^>]*>([\s\S]*?)<\/published>/i)?.[1] ??
         "",
     );
-    if (title && link) items.push({ title, link, summary, source, pubDate });
+
+    let title = rawTitle;
+    let link = rawLink;
+    let itemSource = source;
+
+    if (isGoogleNews) {
+      const extracted = extractRealSource(rawTitle, source.replace(/^News · /, ""));
+      title = extracted.title;
+      itemSource = extracted.sourceName;
+      link = extractRealLink(rawDescription, rawLink);
+    }
+
+    if (title && link) items.push({ title, link, summary, source: itemSource, pubDate });
   }
   return items;
 }
