@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
+import { runAgentCommand } from "@/lib/agent.functions";
 import ReactMarkdown from "react-markdown";
 import { generateFeed } from "@/lib/feed.functions";
 import { FEED_FRESH_MS, getDailyFeed, saveDailyFeed } from "@/lib/daily-feed.functions";
@@ -90,7 +91,6 @@ export function SignalFeed({
   const [agentRunning, setAgentRunning] = useState(false);
   const [agentResult, setAgentResult] = useState<string | null>(null);
   const [agentCmd, setAgentCmd] = useState("");
-  const [anthropicKey, setAnthropicKey] = useState(() => localStorage.getItem("yo_anthropic_key") || "");
   const [generatedAtIso, setGeneratedAtIso] = useState<string | null>(() => {
     return readFeedCache(cacheKey)?.generatedAtIso ?? null;
   });
@@ -116,6 +116,7 @@ export function SignalFeed({
     return FALLBACK_FOCUS_AREAS;
   });
   const fetchFocus = useServerFn(suggestFocusAreas);
+  const runAgent = useServerFn(runAgentCommand);
   const loadGenRef = useRef(0);
   const signalCountRef = useRef(signals.length);
   signalCountRef.current = signals.length;
@@ -487,18 +488,6 @@ export function SignalFeed({
                     <p className="font-serif text-sm text-balance leading-snug">{active.title}</p>
                     <p className="italic text-signal/90 border-l-2 border-signal/60 pl-3 text-xs">{active.why}</p>
                   </div>
-                  {!anthropicKey && (
-                    <div className="space-y-1">
-                      <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Anthropic API key</p>
-                      <input
-                        type="password"
-                        placeholder="sk-ant-..."
-                        value={anthropicKey}
-                        onChange={e => { setAnthropicKey(e.target.value); localStorage.setItem("yo_anthropic_key", e.target.value); }}
-                        className="w-full bg-input border border-border rounded-md px-3 py-2 text-sm outline-none focus:border-signal"
-                      />
-                    </div>
-                  )}
                   {agentResult ? (
                     <div className="flex-1 overflow-y-auto space-y-3">
                       <div className="bg-card border border-signal/30 rounded-lg p-4">
@@ -528,18 +517,21 @@ export function SignalFeed({
                           <button
                             key={cmd}
                             type="button"
-                            disabled={agentRunning || !anthropicKey}
+                            disabled={agentRunning}
                             onClick={() => {
                               setAgentCmd(cmd);
                               setAgentRunning(true);
-                              const sys = `You are Yo, Signal — an AI chief of staff for ${startup.name}. Company: ${startup.description || ""}. Competitors: ${(startup.competitors || []).join(", ")}. Signal: "${active.title}". Why it matters: ${active.why}. Complete the command fully. Return real, specific, actionable output. No hedging.`;
-                              fetch("https://api.anthropic.com/v1/messages", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
-                                body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, system: sys, messages: [{ role: "user", content: cmd }] })
-                              }).then(r => r.json()).then(d => {
-                                const text = d.content?.map((b: {type: string; text?: string}) => b.text || "").join("") || "Something went wrong.";
-                                setAgentResult(text.replace(/#{1,6}\s+/g, "").replace(/\*\*(.*?)\*\*/g, "$1").replace(/\*(.*?)\*/g, "$1").replace(/\n{3,}/g, "\n\n").trim());
+                              runAgent({
+                                data: {
+                                  command: cmd,
+                                  signalTitle: active.title,
+                                  signalWhy: active.why,
+                                  startupName: startup.name,
+                                  startupDescription: startup.description || "",
+                                  competitors: startup.competitors || [],
+                                },
+                              }).then((res) => {
+                                setAgentResult(res.result);
                                 setAgentRunning(false);
                                 if (window.speechSynthesis) {
                                   const u = new SpeechSynthesisUtterance("Done. Your result is ready.");
@@ -549,7 +541,7 @@ export function SignalFeed({
                                   u.rate = 1.1;
                                   window.speechSynthesis.speak(u);
                                 }
-                              }).catch(() => { setAgentResult("Connection error. Check your API key."); setAgentRunning(false); });
+                              }).catch((e) => { setAgentResult(e instanceof Error ? e.message : "Connection error."); setAgentRunning(false); });
                             }}
                             className="text-left text-sm font-serif italic text-foreground/80 border border-border/70 rounded-md px-3 py-2 hover:border-signal/60 hover:text-signal transition disabled:opacity-40"
                           >
@@ -561,18 +553,21 @@ export function SignalFeed({
                         onSubmit={e => {
                           e.preventDefault();
                           const cmd = agentCmd;
-                          if (!cmd.trim() || !anthropicKey) return;
+                          if (!cmd.trim()) return;
                           setAgentRunning(true);
-                          const sys = `You are Yo, Signal — an AI chief of staff for ${startup.name}. Company: ${startup.description || ""}. Signal: "${active.title}". Why it matters: ${active.why}. Complete the command fully.`;
-                          fetch("https://api.anthropic.com/v1/messages", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
-                            body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 2000, system: sys, messages: [{ role: "user", content: cmd }] })
-                          }).then(r => r.json()).then(d => {
-                            const text = d.content?.map((b: {type: string; text?: string}) => b.text || "").join("") || "Something went wrong.";
-                            setAgentResult(text.replace(/#{1,6}\s+/g, "").replace(/\*\*(.*?)\*\*/g, "$1").replace(/\*(.*?)\*/g, "$1").replace(/\n{3,}/g, "\n\n").trim());
+                          runAgent({
+                            data: {
+                              command: cmd,
+                              signalTitle: active.title,
+                              signalWhy: active.why,
+                              startupName: startup.name,
+                              startupDescription: startup.description || "",
+                              competitors: startup.competitors || [],
+                            },
+                          }).then((res) => {
+                            setAgentResult(res.result);
                             setAgentRunning(false);
-                          }).catch(() => { setAgentResult("Connection error."); setAgentRunning(false); });
+                          }).catch((e) => { setAgentResult(e instanceof Error ? e.message : "Connection error."); setAgentRunning(false); });
                         }}
                         className="mt-auto border-t border-border/60 pt-3 flex gap-2"
                       >
@@ -584,7 +579,7 @@ export function SignalFeed({
                         />
                         <button
                           type="submit"
-                          disabled={agentRunning || !agentCmd.trim() || !anthropicKey}
+                          disabled={agentRunning || !agentCmd.trim()}
                           className="bg-signal text-signal-foreground rounded-md px-3 py-2 text-sm font-medium disabled:opacity-40"
                         >
                           {agentRunning ? "…" : "⚡"}
