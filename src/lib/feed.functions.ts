@@ -544,14 +544,17 @@ Return ONLY: {"signals":[{"i":0,"summary":"...","why":"...","tag":"...","relevan
 
     let txt = "{}";
     let aiFailed = false;
+    let aiFailReason = "";
     try {
       const payload = await chatCompletion({
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
       });
       txt = payload.choices?.[0]?.message?.content ?? "{}";
-    } catch {
+    } catch (e) {
       aiFailed = true;
+      aiFailReason = e instanceof Error ? e.message : "Unknown AI error";
+      console.error("[yo-signal feed] AI relevance call failed, using fallback:", aiFailReason);
     }
     let parsed: { signals?: unknown } = {};
     try {

@@ -86,6 +86,7 @@ export function SignalFeed({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [feedDegraded, setFeedDegraded] = useState(false);
   const [active, setActive] = useState<Signal | null>(null);
   const [signalTab, setSignalTab] = useState<"talk" | "agent">("talk");
   const [agentRunning, setAgentRunning] = useState(false);
@@ -153,6 +154,8 @@ export function SignalFeed({
       if (gen !== loadGenRef.current) return;
 
       const next = (res.signals as Signal[]) ?? [];
+      const note = (res as { note?: string }).note;
+      setFeedDegraded(note === "ai-rate-limited" || note === "fallback-raw");
       if (next.length === 0 && attempt < maxAttempts - 1) {
         await new Promise((r) => setTimeout(r, 1200 * (attempt + 1)));
         if (gen !== loadGenRef.current) return;
