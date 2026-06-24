@@ -178,7 +178,19 @@ function parseFeed(xml: string, source: string) {
       link = extractRealLink(rawDescription, rawLink);
     }
 
-    if (title && link) items.push({ title, link, summary, source: itemSource, pubDate });
+    if (title && link) {
+      // Safety net: reject anything older than 30 days even if the source query
+      // claimed it was recent (some reprinted/syndicated articles slip through
+      // with stale pubDates).
+      if (pubDate) {
+        const parsed = new Date(pubDate).getTime();
+        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        if (Number.isFinite(parsed) && parsed < thirtyDaysAgo) {
+          continue;
+        }
+      }
+      items.push({ title, link, summary, source: itemSource, pubDate });
+    }
   }
   return items;
 }
