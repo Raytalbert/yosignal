@@ -189,7 +189,7 @@ function parseFeed(xml: string, source: string) {
           continue;
         }
       }
-      items.push({ title, link, summary, source: itemSource, pubDate });
+      items.push({ title, link, summary, source: itemSource, pubDate, rawDescription });
     }
   }
   return items;
@@ -198,6 +198,7 @@ function parseFeed(xml: string, source: string) {
 type RawFeedItem = {
   title: string;
   link: string;
+  rawDescription?: string;
   summary: string;
   source: string;
   pubDate: string;
@@ -264,9 +265,54 @@ async function fetchSingleFeed(f: FeedSource, retries = 1): Promise<RawFeedItem[
   return [];
 }
 
+const REDIRECT_DOMAINS = [
+  "news.google.com",
+  "www.bing.com",
+  "bing.com",
+  "r.jina.ai",
+  "feedproxy.google.com",
+  "url.uk.m.mimecastprotect.com",
+];
+
+function isRedirectUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return REDIRECT_DOMAINS.some((d) => host === d || host.endsWith("." + d));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Universal cleanup: runs on every item from every source regardless of which
+ * RSS/API it came from. If the URL looks like a redirect/tracker link, try to
+ * pull the real destination out of the raw description HTML (most feeds embed
+ * the true article link as an <a href> inside the summary). If no clean URL
+ * can be found, drop the item rather than ship a dead/blocked link.
+ */
+function resolveRealUrl(item: RawFeedItem & { rawDescription?: string }): RawFeedItem | null {
+  if (!isRedirectUrl(item.link)) return item;
+
+  const html = item.rawDescription ?? item.summary ?? "";
+  const anchors = [...html.matchAll(/<a[^>]+href="([^"]+)"/gi)].map((m) => m[1]);
+  const clean = anchors.find((href) => !isRedirectUrl(href));
+
+  if (clean) {
+    return { ...item, link: clean };
+  }
+  // No clean URL found anywhere — better to drop than ship a broken/blocked link.
+  return null;
+}
+
 function dedupeFeedItems(items: RawFeedItem[]) {
+  // Resolve real URLs first (drops items where we can't find a clean link),
+  // then dedupe by the resolved link.
+  const resolved = items
+    .map((x) => resolveRealUrl(x))
+    .filter((x): x is RawFeedItem => x !== null);
+
   const seen = new Set<string>();
-  return items.filter((x) => {
+  return resolved.filter((x) => {
     if (!x.link || seen.has(x.link)) return false;
     seen.add(x.link);
     return true;
