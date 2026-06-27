@@ -9,12 +9,18 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ResearchRouteImport } from './routes/research'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiAiStatusRouteImport } from './routes/api/ai-status'
 import { Route as ApiPublicHooksMorningBriefRouteImport } from './routes/api/public/hooks/morning-brief'
 
+const ResearchRoute = ResearchRouteImport.update({
+  id: '/research',
+  path: '/research',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/auth': typeof AuthRoute
+  '/research': typeof ResearchRoute
   '/api/ai-status': typeof ApiAiStatusRoute
   '/api/public/hooks/morning-brief': typeof ApiPublicHooksMorningBriefRoute
 }
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/auth': typeof AuthRoute
+  '/research': typeof ResearchRoute
   '/api/ai-status': typeof ApiAiStatusRoute
   '/api/public/hooks/morning-brief': typeof ApiPublicHooksMorningBriefRoute
 }
@@ -61,6 +69,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/app': typeof AppRoute
   '/auth': typeof AuthRoute
+  '/research': typeof ResearchRoute
   '/api/ai-status': typeof ApiAiStatusRoute
   '/api/public/hooks/morning-brief': typeof ApiPublicHooksMorningBriefRoute
 }
@@ -70,6 +79,7 @@ export interface FileRouteTypes {
     | '/'
     | '/app'
     | '/auth'
+    | '/research'
     | '/api/ai-status'
     | '/api/public/hooks/morning-brief'
   fileRoutesByTo: FileRoutesByTo
@@ -77,6 +87,7 @@ export interface FileRouteTypes {
     | '/'
     | '/app'
     | '/auth'
+    | '/research'
     | '/api/ai-status'
     | '/api/public/hooks/morning-brief'
   id:
@@ -84,6 +95,7 @@ export interface FileRouteTypes {
     | '/'
     | '/app'
     | '/auth'
+    | '/research'
     | '/api/ai-status'
     | '/api/public/hooks/morning-brief'
   fileRoutesById: FileRoutesById
@@ -92,12 +104,20 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
   AuthRoute: typeof AuthRoute
+  ResearchRoute: typeof ResearchRoute
   ApiAiStatusRoute: typeof ApiAiStatusRoute
   ApiPublicHooksMorningBriefRoute: typeof ApiPublicHooksMorningBriefRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/research': {
+      id: '/research'
+      path: '/research'
+      fullPath: '/research'
+      preLoaderRoute: typeof ResearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/auth': {
       id: '/auth'
       path: '/auth'
@@ -140,6 +160,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
   AuthRoute: AuthRoute,
+  ResearchRoute: ResearchRoute,
   ApiAiStatusRoute: ApiAiStatusRoute,
   ApiPublicHooksMorningBriefRoute: ApiPublicHooksMorningBriefRoute,
 }
